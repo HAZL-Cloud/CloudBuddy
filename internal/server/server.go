@@ -12,13 +12,16 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cloudbuddy/internal/bus"
 	"cloudbuddy/internal/config"
 	"cloudbuddy/internal/model"
+	"cloudbuddy/internal/picker"
 	"cloudbuddy/internal/run"
 	"cloudbuddy/internal/store"
 )
@@ -38,6 +41,9 @@ type Server struct {
 	agents  func() []Agent
 	scan    func(ctx context.Context) error
 	devPort int
+	// pick opens the computer's folder chooser (D-058); tests replace it.
+	pick    func(ctx context.Context, prompt, start string) (string, error)
+	picking atomic.Bool
 
 	mu       sync.Mutex
 	launch   map[string]time.Time // one-time launch codes
@@ -45,7 +51,7 @@ type Server struct {
 }
 
 func New(cfg config.Config, eng *run.Engine, b *bus.Bus, web fs.FS, agents func() []Agent, scan func(context.Context) error) *Server {
-	s := &Server{cfg: cfg, eng: eng, bus: b, web: web, agents: agents, scan: scan,
+	s := &Server{cfg: cfg, eng: eng, bus: b, web: web, agents: agents, scan: scan, pick: picker.Folder,
 		launch: map[string]time.Time{}, sessions: map[string]string{}}
 	if cfg.Dev {
 		s.devPort = 5173
@@ -76,6 +82,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/approvals/{id}", s.auth(s.handleDecide))
 	mux.HandleFunc("GET /api/settings", s.auth(s.handleSettings))
 	mux.HandleFunc("PUT /api/settings", s.auth(s.handleSaveSettings))
+	mux.HandleFunc("POST /api/pick-folder", s.auth(s.handlePickFolder))
 	mux.HandleFunc("GET /api/projects", s.auth(s.handleProjects))
 	mux.HandleFunc("POST /api/projects", s.auth(s.handleSaveProject))
 	mux.HandleFunc("PUT /api/projects/{id}", s.auth(s.handleSaveProject))
@@ -274,6 +281,41 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, set)
+}
+
+// handlePickFolder opens the computer's own folder chooser and returns the
+// folder picked (D-058). One chooser at a time; it closes if the page stops
+// waiting. Nothing is saved here: the path is checked again where it is used.
+func (s *Server) handlePickFolder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Start string `json:"start"`
+	}
+	_ = readJSON(r, &body) // the body is optional
+	start := strings.TrimSpace(body.Start)
+	if strings.HasPrefix(start, "~/") {
+		start = filepath.Join(s.cfg.Home, start[2:])
+	}
+	if !filepath.IsAbs(start) {
+		start = s.cfg.Home
+	}
+	if !s.picking.CompareAndSwap(false, true) {
+		writeErr(w, 409, "busy")
+		return
+	}
+	defer s.picking.Store(false)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+	path, err := s.pick(ctx, "Choose a folder for CloudBuddy", start)
+	switch {
+	case errors.Is(err, picker.ErrCancelled):
+		writeJSON(w, 200, map[string]bool{"cancelled": true})
+	case errors.Is(err, picker.ErrUnavailable):
+		writeErr(w, 501, "no_picker")
+	case err != nil:
+		writeErr(w, 500, "the folder chooser failed: "+err.Error())
+	default:
+		writeJSON(w, 200, map[string]string{"path": path})
+	}
 }
 
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {

@@ -3,6 +3,7 @@ import { ApiError } from '../api'
 import { plural } from '../format'
 import { useSaveSettings, useSettings } from '../queries'
 import type { Agent, AgentName, Project } from '../types'
+import { FolderField } from './FolderField'
 import { Icon } from './Icon'
 import { useToast } from './Toast'
 
@@ -74,18 +75,16 @@ export function SettingsPage({ agents, projects, onNewProject, onEditProject }: 
 
             <div className="conn-sec">
               <h3>
-                <label htmlFor="set-folder">Folder for chats outside a project</label>
+                <label htmlFor="set-folder">Working folder for chats without a project</label>
               </h3>
-              <input
-                id="set-folder"
-                className="set-input mono"
-                value={folder ?? ''}
-                placeholder="~/code/my-project"
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(e) => setFolder(e.target.value)}
-              />
-              <p className="field-help">Use a full path. Chats in a project use the project&apos;s folders instead.</p>
+              <p className="field-help">
+                The agent always works in a folder: it starts there and can change files there without asking. A chat in a
+                project uses the project&apos;s folders. A chat with no project, such as a quick check of a server, uses this
+                one.
+              </p>
+              <div className="set-folder">
+                <FolderField id="set-folder" value={folder ?? ''} onChange={setFolder} />
+              </div>
             </div>
 
             {save.isError && (

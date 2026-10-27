@@ -3,6 +3,7 @@ import { ApiError } from '../api'
 import { useDeleteProject, useSaveProject } from '../queries'
 import type { Project } from '../types'
 import { Dialog } from './Dialog'
+import { FolderField, folderName, parentFolder, usePickFolder } from './FolderField'
 import { Icon } from './Icon'
 import { useToast } from './Toast'
 
@@ -27,10 +28,23 @@ export function ProjectDialog({ project, onClose, onSaved, onDeleted }: ProjectD
   const [name, setName] = useState(project?.name ?? '')
   const [folders, setFolders] = useState<string[]>(project?.folders.length ? project.folders : [''])
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const picker = usePickFolder()
 
   const filled = folders.map((f) => f.trim()).filter(Boolean)
   const ready = name.trim() !== '' && filled.length > 0 && !save.isPending
   const setFolder = (i: number, value: string) => setFolders((list) => list.map((f, j) => (j === i ? value : f)))
+  // Other folders of a project usually sit next to the first one, so the chooser opens there.
+  const nextTo = filled[0] ? parentFolder(filled[0]) : undefined
+  // "Add a folder" goes straight to the chooser. Without one, it adds an empty box to type in.
+  const addFolder = async () => {
+    const res = await picker.choose(nextTo)
+    if (res.path) {
+      const path = res.path
+      setFolders((list) => (list.some((f) => f.trim() === path) ? list : [...list.filter((f) => f.trim() !== ''), path]))
+    } else if (res.unavailable) {
+      setFolders((list) => [...list, ''])
+    }
+  }
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -65,19 +79,16 @@ export function ProjectDialog({ project, onClose, onSaved, onDeleted }: ProjectD
         </div>
         <fieldset className="field folders">
           <legend>Folders</legend>
-          <p className="field-help">
-            The agent starts in the first folder and can read and change files in all of them. Use full paths.
-          </p>
+          <p className="field-help">The agent starts in the first folder and can read and change files in all of them.</p>
           {folders.map((f, i) => (
             <div className="folder-row" key={i}>
-              <input
-                className="mono"
+              <FolderField
+                label={i === 0 ? 'First folder (the agent starts here)' : `Folder ${i + 1}`}
                 value={f}
-                aria-label={i === 0 ? 'First folder (the agent starts here)' : `Folder ${i + 1}`}
-                placeholder={i === 0 ? '~/code/shop-web' : '~/code/shop-infra'}
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(e) => setFolder(i, e.target.value)}
+                start={i === 0 ? undefined : nextTo}
+                onChange={(value) => setFolder(i, value)}
+                // A new project is named after its first folder until you name it.
+                onPicked={(path) => i === 0 && !name.trim() && setName(folderName(path))}
               />
               {folders.length > 1 && (
                 <button
@@ -92,9 +103,9 @@ export function ProjectDialog({ project, onClose, onSaved, onDeleted }: ProjectD
             </div>
           ))}
           {folders.length < MAX_FOLDERS && (
-            <button type="button" className="btn link add-folder" onClick={() => setFolders((list) => [...list, ''])}>
+            <button type="button" className="btn link add-folder" disabled={picker.busy} onClick={() => void addFolder()}>
               <Icon name="plus" small />
-              Add a folder
+              {picker.busy ? 'Choosing…' : 'Add a folder'}
             </button>
           )}
         </fieldset>

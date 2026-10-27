@@ -34,6 +34,9 @@ interface MockState {
   /** Multiplies every delay. Tests set it to 0. */
   speed: number
   counter: number
+  /** What the folder chooser does: picks a folder, is cancelled, or doesn't exist on this computer. */
+  picker: 'pick' | 'cancel' | 'none'
+  picks: number
 }
 
 const state: MockState = {
@@ -44,13 +47,16 @@ const state: MockState = {
   signedIn: true,
   speed: 1,
   counter: 0,
+  picker: 'pick',
+  picks: 0,
 }
 const timers = new Set<ReturnType<typeof setTimeout>>()
 const listeners = new Set<(ev: StreamEvent) => void>()
 
-export function configureMock(opts: { speed?: number; signedIn?: boolean }): void {
+export function configureMock(opts: { speed?: number; signedIn?: boolean; picker?: MockState['picker'] }): void {
   if (opts.speed !== undefined) state.speed = opts.speed
   if (opts.signedIn !== undefined) state.signedIn = opts.signedIn
+  if (opts.picker !== undefined) state.picker = opts.picker
 }
 
 export function subscribeMock(fn: (ev: StreamEvent) => void): () => void {
@@ -68,6 +74,8 @@ export function resetMock(): void {
   state.settings = seedSettings()
   state.connections = seedConnections()
   state.signedIn = true
+  state.picker = 'pick'
+  state.picks = 0
   emit({ type: 'conversations' })
   emit({ type: 'connections' })
   emit({ type: 'projects' })
@@ -361,6 +369,12 @@ export async function mockRequest({ method, path, body, csrf }: MockRequest): Pr
   if (route === 'POST /api/conversations') return createConversation(b as { text?: string; projectId?: string })
   if (route === 'GET /api/settings') return clone(state.settings)
   if (route === 'PUT /api/settings') return saveSettings(b as Partial<Settings>)
+  // The mock can't open a real chooser, so it "picks" made-up folders in turn.
+  if (route === 'POST /api/pick-folder') {
+    if (state.picker === 'none') throw new ApiError(501, 'no_picker')
+    if (state.picker === 'cancel') return { cancelled: true }
+    return { path: `/Users/you/code/${['shop-web', 'shop-infra', 'shop-docs'][state.picks++ % 3]}` }
+  }
   if (route === 'GET /api/projects') return projectList()
   if (route === 'POST /api/projects') return saveProject(null, b as unknown as ProjectInput)
   if ((m = path.match(/^\/api\/projects\/([^/]+)$/))) {

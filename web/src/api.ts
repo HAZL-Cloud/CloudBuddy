@@ -113,6 +113,8 @@ export const api = {
     call<Step>('POST', `/api/approvals/${enc(approvalId)}`, { decision }),
   settings: () => call<Settings>('GET', '/api/settings'),
   saveSettings: (input: Settings) => call<Settings>('PUT', '/api/settings', input),
+  /** Opens the computer's folder chooser (D-058). Waits until a folder is picked or the chooser is closed. */
+  pickFolder: (start?: string) => call<{ path?: string; cancelled?: boolean }>('POST', '/api/pick-folder', { start: start ?? '' }),
   projects: () => call<Project[]>('GET', '/api/projects'),
   createProject: (input: ProjectInput) => call<Project>('POST', '/api/projects', input),
   updateProject: (id: string, input: ProjectInput) => call<Project>('PUT', `/api/projects/${enc(id)}`, input),

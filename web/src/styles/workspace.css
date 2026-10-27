@@ -102,3 +102,11 @@
   .set-project{grid-template-columns:minmax(0,1fr) auto}
   .set-count{display:none}
 }
+
+/* Folder boxes with a Choose… button (D-058) */
+.folder-field{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.folder-field input{flex:1;min-width:0;width:auto;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:13px var(--f-mono)}
+.folder-field input:focus{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
+.folder-field .btn{flex:none;padding-block:8px}
+.folder-wait{flex-basis:100%;font-size:12px;color:var(--accent)}
+.set-folder{width:min(720px,100%)}

@@ -189,7 +189,7 @@ describe('the composer and new chats', () => {
     expect(screen.getByText('~/code/shipyard-infra')).toBeInTheDocument()
 
     await userEvent.click(within(sidebar()).getByRole('button', { name: /Settings/ }))
-    const folder = await screen.findByLabelText('Folder for chats outside a project')
+    const folder = await screen.findByLabelText('Working folder for chats without a project')
     await waitFor(() => expect(folder).toHaveValue('~/code/shipyard-infra'))
     await userEvent.clear(folder)
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }))
@@ -224,28 +224,54 @@ describe('projects', () => {
     expect(within(sidebar()).getByText('Launch the paid newsletter')).toBeInTheDocument()
   })
 
-  it('creates a project from the sidebar and opens a new chat in it', async () => {
+  it('creates a project by choosing its folders, and opens a new chat in it', async () => {
     await openApp()
     await userEvent.click(within(sidebar()).getByRole('button', { name: 'New project' }))
     const dialog = await screen.findByRole('dialog', { name: 'New project' })
     const create = within(dialog).getByRole('button', { name: 'Create project' })
     expect(create).toBeDisabled()
-    await userEvent.type(within(dialog).getByLabelText('Name'), 'Billing')
-    await userEvent.type(within(dialog).getByLabelText('First folder (the agent starts here)'), 'code/billing')
-    await userEvent.click(create)
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Use a full folder path')
-    await userEvent.clear(within(dialog).getByLabelText('First folder (the agent starts here)'))
-    await userEvent.type(within(dialog).getByLabelText('First folder (the agent starts here)'), '~/code/billing')
+    // the computer's chooser picks the first folder, and the project is named after it
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Choose first folder (the agent starts here)' }))
+    expect(await within(dialog).findByDisplayValue('/Users/you/code/shop-web')).toBeInTheDocument()
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('shop-web')
+    // "Add a folder" goes straight to the chooser
     await userEvent.click(within(dialog).getByRole('button', { name: 'Add a folder' }))
-    await userEvent.type(within(dialog).getByLabelText('Folder 2'), '~/code/infra')
+    expect(await within(dialog).findByLabelText('Folder 2')).toHaveValue('/Users/you/code/shop-infra')
+    await userEvent.clear(within(dialog).getByLabelText('Name'))
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'Billing')
     await userEvent.click(create)
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(await screen.findByLabelText('Project')).toHaveDisplayValue('Billing')
+    expect(screen.getByText('/Users/you/code/shop-infra')).toBeInTheDocument()
     expect(within(sidebar()).getByText('Chats in Billing')).toBeInTheDocument()
     expect(within(sidebar()).getByText('No chats in this project yet.')).toBeInTheDocument()
     await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'Deploy billing{Enter}')
     expect(await screen.findByRole('heading', { name: 'Deploy billing' })).toBeInTheDocument()
     expect(await within(sidebar()).findByText('Deploy billing')).toBeInTheDocument()
+  })
+
+  it('still takes a typed path, and says when one is not a full path', async () => {
+    await openApp()
+    await userEvent.click(within(sidebar()).getByRole('button', { name: 'New project' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New project' })
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'Billing')
+    await userEvent.type(within(dialog).getByLabelText('First folder (the agent starts here)'), 'code/billing')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create project' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Use a full folder path')
+  })
+
+  it('without a folder chooser, "Add a folder" adds a box to type in; Cancel adds nothing', async () => {
+    await openApp()
+    await userEvent.click(within(sidebar()).getByRole('button', { name: 'New project' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New project' })
+    configureMock({ picker: 'cancel' })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add a folder' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Add a folder' })).toBeEnabled())
+    expect(within(dialog).queryByLabelText('Folder 2')).toBeNull()
+    configureMock({ picker: 'none' })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add a folder' }))
+    expect(await within(dialog).findByLabelText('Folder 2')).toHaveValue('')
+    expect(await screen.findByText('This computer has no folder chooser. Type the full path instead.')).toBeInTheDocument()
   })
 
   it('edits and deletes a project; its chats stay', async () => {
@@ -280,6 +306,17 @@ describe('Settings', () => {
     expect(await screen.findByText('Settings saved. New chats use them.')).toBeInTheDocument()
     await userEvent.click(within(sidebar()).getByRole('button', { name: 'New chat' }))
     expect(await screen.findByRole('heading', { name: 'What should Codex do?' })).toBeInTheDocument()
+  })
+
+  it('picks the working folder with the folder chooser', async () => {
+    await openApp()
+    await userEvent.click(within(sidebar()).getByRole('button', { name: /Settings/ }))
+    const folder = await screen.findByLabelText('Working folder for chats without a project')
+    await waitFor(() => expect(folder).toHaveValue('~/code/shipyard-infra'))
+    await userEvent.click(screen.getByRole('button', { name: 'Choose a folder' }))
+    await waitFor(() => expect(folder).toHaveValue('/Users/you/code/shop-web'))
+    await userEvent.click(screen.getByRole('button', { name: 'Save settings' }))
+    expect(await screen.findByText('Settings saved. New chats use them.')).toBeInTheDocument()
   })
 
   it('lists the projects with their folders', async () => {

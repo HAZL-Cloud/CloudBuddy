@@ -38,7 +38,7 @@ bin/cloudbuddy      # opens your browser
 
 CloudBuddy prints a one-time link and opens it. The link signs your browser in and works once. To open CloudBuddy again later, restart it for a new link.
 
-Pick your agent in **Settings**, add a project (its name and folders) with **+** next to Projects, then click **New chat** and describe the job. The first message starts the chat.
+Pick your agent in **Settings**, add a project (its name and folders, picked with **Choose…**) with **+** next to Projects, then click **New chat** and describe the job. The first message starts the chat.
 
 ### Try it without an agent
 

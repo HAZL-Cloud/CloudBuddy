@@ -22,6 +22,7 @@ import (
 	"cloudbuddy/internal/bus"
 	"cloudbuddy/internal/config"
 	"cloudbuddy/internal/model"
+	"cloudbuddy/internal/picker"
 	"cloudbuddy/internal/run"
 	"cloudbuddy/internal/store"
 )
@@ -460,5 +461,59 @@ func TestProjectsAndSettings(t *testing.T) {
 	_ = json.Unmarshal(b, &created)
 	if d := e.detail(created.ID); d.Workdir != real(e.work) || len(d.ExtraFolders) != 0 || d.Agent != "fake" {
 		t.Fatalf("chat from settings: workdir=%s extra=%v agent=%s", d.Workdir, d.ExtraFolders, d.Agent)
+	}
+}
+
+func TestPickFolder(t *testing.T) {
+	e := newEnv(t, filepath.Join(repoRoot(), "testdata", "scenarios", "demo.json"))
+	e.signIn()
+	var gotStart string
+	answer := func(path string, err error) {
+		e.srv.pick = func(_ context.Context, _, start string) (string, error) { gotStart = start; return path, err }
+	}
+
+	answer("/code/shop", nil)
+	if st, b := e.do("POST", "/api/pick-folder", map[string]string{"start": "~/code"}, nil); st != 200 || !strings.Contains(string(b), `"path":"/code/shop"`) {
+		t.Fatalf("pick: %d %s", st, b)
+	}
+	if gotStart != filepath.Join(e.srv.cfg.Home, "code") {
+		t.Errorf("start folder: %q", gotStart)
+	}
+	if st, _ := e.do("POST", "/api/pick-folder", map[string]string{"start": "relative"}, nil); st != 200 || gotStart != e.srv.cfg.Home {
+		t.Errorf("relative start should open at home, got %q", gotStart)
+	}
+	answer("", picker.ErrCancelled)
+	if st, b := e.do("POST", "/api/pick-folder", nil, nil); st != 200 || !strings.Contains(string(b), `"cancelled":true`) {
+		t.Fatalf("cancel: %d %s", st, b)
+	}
+	answer("", picker.ErrUnavailable)
+	if st, b := e.do("POST", "/api/pick-folder", nil, nil); st != 501 || !strings.Contains(string(b), "no_picker") {
+		t.Fatalf("no chooser: %d %s", st, b)
+	}
+	// a page can't open the chooser without the CSRF header, or from another origin
+	answer("/code/shop", nil)
+	if st, _ := e.do("POST", "/api/pick-folder", nil, map[string]string{"X-CB-CSRF": ""}); st != 403 {
+		t.Fatalf("no CSRF header: %d", st)
+	}
+	if st, _ := e.do("POST", "/api/pick-folder", nil, map[string]string{"Origin": "http://evil.example"}); st != 403 {
+		t.Fatalf("other origin: %d", st)
+	}
+
+	// one chooser at a time
+	opened, release := make(chan struct{}), make(chan struct{})
+	e.srv.pick = func(context.Context, string, string) (string, error) {
+		close(opened)
+		<-release
+		return "/code/a", nil
+	}
+	done := make(chan int)
+	go func() { st, _ := e.do("POST", "/api/pick-folder", nil, nil); done <- st }()
+	<-opened
+	if st, _ := e.do("POST", "/api/pick-folder", nil, nil); st != 409 {
+		t.Errorf("second chooser while one is open: %d", st)
+	}
+	close(release)
+	if st := <-done; st != 200 {
+		t.Errorf("first chooser: %d", st)
 	}
 }

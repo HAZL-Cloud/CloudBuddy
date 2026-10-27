@@ -121,6 +121,7 @@ interface Connection {
 | POST | `/api/approvals/:id` | `{ decision: "approve" \| "deny" }` | `200 Step` / `409 {"error":"not_pending"}` |
 | GET | `/api/settings` | | `Settings` |
 | PUT | `/api/settings` | `Settings` | `Settings` (the folder resolved) / `400` with a message for people |
+| POST | `/api/pick-folder` | `{ start? }` | Opens the computer's own folder chooser (D-058) and waits: `{ path }`, or `{ cancelled: true }`. `409 busy` while one is open; `501 no_picker` when this computer has none (Linux without zenity or kdialog). Nothing is saved; the path is checked where it is used. |
 | GET | `/api/projects` | | `Project[]` (by name) |
 | POST | `/api/projects` | `{ name, folders }` | `Project` / `400` with a message for people |
 | PUT | `/api/projects/:id` | `{ name, folders }` | `Project`. Chats already in the project keep their folders. |
