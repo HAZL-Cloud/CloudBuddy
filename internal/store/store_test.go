@@ -189,3 +189,48 @@ func TestChatGroupsSteps(t *testing.T) {
 		t.Fatalf("chat: %+v", items)
 	}
 }
+
+func TestLinksPointToWhereAValueFirstAppeared(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	conv, run, first := seed(t, s)
+	step := func(key string) string {
+		st, err := s.UpsertStep(ctx, conv, run, key, func(st *model.Step, isNew bool) { st.Title = key })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st.ID
+	}
+	second, third := step("tool-2"), step("tool-3")
+	// The instance ID shows up in the first step's output and is echoed by the second;
+	// the second step also prints a new security group ID.
+	if err := s.AddLinkTokens(ctx, conv, first, map[string]string{"h-instance": "resource ID"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddLinkTokens(ctx, conv, second, map[string]string{"h-instance": "resource ID", "h-sg": "resource ID"}); err != nil {
+		t.Fatal(err)
+	}
+
+	uses, err := s.FindLinks(ctx, conv, third, []string{"h-instance"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(uses) != 1 || uses[0].FromStepID != first {
+		t.Fatalf("instance ID should link only to the first step, got %+v", uses)
+	}
+	uses, _ = s.FindLinks(ctx, conv, third, []string{"h-instance", "h-sg"})
+	if len(uses) != 2 {
+		t.Fatalf("want one link per first appearance, got %+v", uses)
+	}
+	// A step never links to a later one.
+	if uses, _ := s.FindLinks(ctx, conv, first, []string{"h-sg"}); len(uses) != 0 {
+		t.Fatalf("linked to a later step: %+v", uses)
+	}
+	firsts, err := s.FirstProducers(ctx, conv, []string{"h-instance", "h-sg", "h-none"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firsts["h-instance"] != first || firsts["h-sg"] != second || len(firsts) != 2 {
+		t.Fatalf("first producers: %+v", firsts)
+	}
+}

@@ -63,7 +63,7 @@ interface Step {
   output: string;              // masked, capped
   outputTruncated: boolean;
   maskedNote?: string;         // e.g. "CloudBuddy hid a secret before saving this output."
-  uses: { fromStepId: string; what: string }[];
+  uses: { fromStepId: string; what: string }[];  // the earlier step where each value first appeared
   approval?: Approval;
 }
 

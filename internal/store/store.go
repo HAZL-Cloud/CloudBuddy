@@ -527,13 +527,18 @@ func (s *Store) AddLinkTokens(ctx context.Context, convID, stepID string, tokens
 	return nil
 }
 
-// FindLinks returns earlier steps that produced any of the hashes.
+// FindLinks returns, for each value, the earlier step where it first appeared.
+// A value echoed again by later outputs still points to that first step.
 func (s *Store) FindLinks(ctx context.Context, convID, stepID string, hashes []string) ([]model.Use, error) {
 	if len(hashes) == 0 {
 		return nil, nil
 	}
-	rows, err := s.db.Query(ctx, `SELECT DISTINCT ON (l.step_id) l.step_id, l.what FROM link_tokens l JOIN steps s ON s.id=l.step_id
-		WHERE l.conversation_id=$1 AND l.token_hash = ANY($2) AND l.step_id <> $3 ORDER BY l.step_id`, convID, hashes, stepID)
+	rows, err := s.db.Query(ctx, `SELECT DISTINCT ON (o.step_id) o.step_id, o.what FROM (
+			SELECT DISTINCT ON (l.token_hash) l.token_hash, l.step_id, l.what FROM link_tokens l JOIN steps s ON s.id=l.step_id
+			WHERE l.conversation_id=$1 AND l.token_hash = ANY($2) AND l.step_id <> $3
+				AND s.seq < COALESCE((SELECT seq FROM steps WHERE id=$3), 2147483647)
+			ORDER BY l.token_hash, s.seq
+		) o ORDER BY o.step_id`, convID, hashes, stepID)
 	if err != nil {
 		return nil, err
 	}
@@ -545,6 +550,28 @@ func (s *Store) FindLinks(ctx context.Context, convID, stepID string, hashes []s
 			return nil, err
 		}
 		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// FirstProducers maps each hash to the step where that value first appeared.
+func (s *Store) FirstProducers(ctx context.Context, convID string, hashes []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(hashes) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(ctx, `SELECT DISTINCT ON (l.token_hash) l.token_hash, l.step_id FROM link_tokens l JOIN steps s ON s.id=l.step_id
+		WHERE l.conversation_id=$1 AND l.token_hash = ANY($2) ORDER BY l.token_hash, s.seq`, convID, hashes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var h, id string
+		if err := rows.Scan(&h, &id); err != nil {
+			return nil, err
+		}
+		out[h] = id
 	}
 	return out, rows.Err()
 }

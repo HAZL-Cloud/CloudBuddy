@@ -15,8 +15,9 @@ import (
 	"cloudbuddy/internal/recognize"
 )
 
-// Values one step produces and a later step uses become blue arrows on the
-// canvas (section 4.4). Only keyed hashes are stored, never raw values; the
+// A value a later step uses links it to the step where the value first
+// appeared. The canvas draws a line when that step created it and shows a
+// chip otherwise (D-053). Only keyed hashes are stored, never raw values; the
 // key is per conversation and lives in CloudBuddy's protected folder.
 
 var idPatterns = []struct {
@@ -90,6 +91,16 @@ func (e *Engine) backfillLinks(ctx context.Context, r *Run, producerID string, k
 	if err != nil {
 		return
 	}
+	hashes := make([]string, 0, len(toks))
+	for h := range toks {
+		hashes = append(hashes, h)
+	}
+	// Only values that first appeared here: a step that merely echoes a value
+	// does not take the link away from where it came from.
+	first, err := e.st.FirstProducers(ctx, r.ConvID, hashes)
+	if err != nil {
+		return
+	}
 	seq := -1
 	for _, s := range steps {
 		if s.ID == producerID {
@@ -102,7 +113,8 @@ func (e *Engine) backfillLinks(ctx context.Context, r *Run, producerID string, k
 		}
 		what := ""
 		for v := range extractIDs(s.Command) {
-			if w, ok := toks[linkHash(key, v)]; ok {
+			h := linkHash(key, v)
+			if w, ok := toks[h]; ok && first[h] == producerID {
 				what = w
 			}
 		}

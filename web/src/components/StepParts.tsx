@@ -1,5 +1,6 @@
 import { Fragment } from 'react'
 import { clock, duration } from '../format'
+import { rangeLabel, type Chip } from '../layout'
 import type { Action, Decision, Step } from '../types'
 import { ACTIONS, TAGS } from '../vocab'
 import { Icon } from './Icon'
@@ -122,16 +123,72 @@ export function usesText(u: Step['uses'][number], numbers: Record<string, number
   return n === undefined ? `the ${u.what} from a local step` : `the ${u.what} from step ${n}`
 }
 
-export function UsesLines({ step, numbers }: { step: Step; numbers: Record<string, number> }) {
+/** Values a line brings in. The line says it on the canvas; this says it to screen readers. */
+export function CarriedNote({ carried, numbers }: { carried: Step['uses']; numbers: Record<string, number> }) {
+  if (carried.length === 0) return null
   return (
-    <>
-      {step.uses.map((u, i) => (
-        <div key={`${u.fromStepId}-${i}`} className="uses">
-          <Icon name="link" small />
-          <span>Uses {usesText(u, numbers)}</span>
-        </div>
+    <span className="sr-only">
+      {carried.map((u, i) => (
+        <span key={`${u.fromStepId}-${i}`}>Uses {usesText(u, numbers)}. </span>
       ))}
-    </>
+    </span>
+  )
+}
+
+/** "1, 3–5" or "2, local work": where a chip's values came from. */
+function chipWhere(chip: Chip, numbers: Record<string, number>): string {
+  const nums = chip.from.map((id) => numbers[id]).filter((n): n is number => n !== undefined)
+  return [nums.length ? rangeLabel(nums) : '', chip.local ? 'local work' : ''].filter(Boolean).join(', ')
+}
+
+export const chipLabel = (chip: Chip, numbers: Record<string, number>) => `from ${chipWhere(chip, numbers)}: ${chip.whats.join(', ')}`
+
+export interface ChipListProps {
+  chips: Chip[]
+  numbers: Record<string, number>
+  /** Called with the steps to trace back to while a chip is hovered or focused, and with null after. */
+  onTrace: (sources: string[] | null) => void
+  onShow: (stepId: string) => void
+}
+
+/** Values found earlier. Hover or focus traces them back; a click shows where they came from. */
+export function ChipList({ chips, numbers, onTrace, onShow }: ChipListProps) {
+  if (chips.length === 0) return null
+  return (
+    <div className="chips">
+      {chips.map((c) => {
+        const label = chipLabel(c, numbers)
+        const first = c.from[0]
+        if (!first) {
+          return (
+            <span key={label} className="chip-from" title={`The ${c.whats.join(', ')} came from local work, which isn't on the canvas.`}>
+              <Icon name="link" small />
+              <span>{label}</span>
+            </span>
+          )
+        }
+        return (
+          <button
+            key={label}
+            type="button"
+            className="chip-from"
+            title={`Show step ${numbers[first] ?? ''}`}
+            aria-label={`Uses the ${c.whats.join(', ')} from ${chipWhere(c, numbers)}. Show step ${numbers[first] ?? ''}.`}
+            onMouseEnter={() => onTrace(c.from)}
+            onMouseLeave={() => onTrace(null)}
+            onFocus={() => onTrace(c.from)}
+            onBlur={() => onTrace(null)}
+            onClick={() => {
+              onTrace(null)
+              onShow(first)
+            }}
+          >
+            <Icon name="link" small />
+            <span>{label}</span>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 

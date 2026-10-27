@@ -9,10 +9,15 @@ export interface CanvasView {
   /** null means "live": nothing is dimmed. */
   viewIndex: number | null
   deciding: Deciding | null
+  /** Steps a hovered chip traces back to. */
+  traced: ReadonlySet<string>
   /** True for cards that appeared after the chat was opened. */
   isNew: (id: string) => boolean
   onSelect: (id: string, viaKeyboard?: boolean) => void
   onDecide: (step: Step, decision: Decision) => void
+  onTrace: (stepId: string, sources: string[] | null) => void
+  /** Select a step and bring it into view, switching the filter if it is hidden. */
+  onShow: (stepId: string) => void
 }
 
 const empty: CanvasView = {
@@ -20,9 +25,12 @@ const empty: CanvasView = {
   selectedId: null,
   viewIndex: null,
   deciding: null,
+  traced: new Set(),
   isNew: () => false,
   onSelect: () => {},
   onDecide: () => {},
+  onTrace: () => {},
+  onShow: () => {},
 }
 
 export const CanvasViewContext = createContext<CanvasView>(empty)

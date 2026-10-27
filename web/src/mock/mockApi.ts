@@ -74,6 +74,11 @@ function later(ms: number, fn: () => void): void {
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T
 const nextId = (prefix: string) => `${prefix}${++state.counter}`
 const now = () => new Date().toISOString()
+/** A chat that just changed sorts first, as on the server. Seeded chats use clock times that can still be ahead today. */
+const newest = () => {
+  const latest = state.convs.reduce((m, c) => (c.updatedAt > m ? c.updatedAt : m), '')
+  return latest >= now() ? new Date(Date.parse(latest) + 1000).toISOString() : now()
+}
 
 function summary(c: ConversationDetail): ConversationSummary {
   const { id, title, agent, model, workdir, status, updatedAt, stepCount, waitingCount } = c
@@ -84,7 +89,7 @@ function summary(c: ConversationDetail): ConversationSummary {
 function touch(c: ConversationDetail): void {
   c.stepCount = c.steps.length
   c.waitingCount = c.steps.filter((s) => s.status === 'waiting').length
-  c.updatedAt = now()
+  c.updatedAt = newest()
   emit({ type: 'conversation', conversationId: c.id })
 }
 
@@ -116,7 +121,7 @@ function createConversation(body: { agent: AgentName; workdir: string; text: str
     model: '',
     workdir: body.workdir,
     status: 'running',
-    updatedAt: now(),
+    updatedAt: newest(),
     stepCount: 0,
     waitingCount: 0,
     subtitle: 'No cloud steps yet',

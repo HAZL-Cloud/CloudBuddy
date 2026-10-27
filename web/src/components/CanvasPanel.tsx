@@ -21,8 +21,8 @@ import { RESULT_ID, computeLayout, type StepFilter } from '../layout'
 import type { ConversationDetail, Decision, Step } from '../types'
 import { CanvasViewContext, type CanvasView } from './canvasContext'
 import { EDGE_TYPES, EdgeMarkers, NODE_TYPES } from './canvasNodes'
-import { LaneRail, TallyPills, ZoomControls } from './CanvasChrome'
-import { LANE_PREFIX, toFlow, type CanvasNode } from './flowGraph'
+import { ColumnRuler, LaneRail, TallyPills, ZoomControls } from './CanvasChrome'
+import { LANE_PREFIX, toFlow, type CanvasNode, type Trace } from './flowGraph'
 import { Inspector } from './Inspector'
 import { Scrubber } from './Scrubber'
 import type { Deciding } from './StepParts'
@@ -68,15 +68,16 @@ function CanvasInner({ detail, mobile, focusRequest, onFocusHandled, deciding, o
   const [playing, setPlaying] = useState(false)
   const [heights, setHeights] = useState<Record<string, number>>({})
   const [pendingShow, setPendingShow] = useState<string | null>(null)
+  const [trace, setTrace] = useState<Trace | null>(null)
 
   const steps = detail?.steps ?? NO_STEPS
   const result = detail?.result
   const layout = useMemo(() => computeLayout({ steps, result, filter, heights }), [steps, result, filter, heights])
-  const graph = useMemo(() => toFlow(layout, heights, result), [layout, heights, result])
+  const graph = useMemo(() => toFlow(layout, heights, result, trace), [layout, heights, result, trace])
 
   // Cards are measured by React Flow after they render. Until every card has a height, positions are estimates.
   const measured =
-    layout.steps.every((s) => heights[s.id] !== undefined) && (!layout.hasResult || heights[RESULT_ID] !== undefined)
+    layout.blocks.every((b) => heights[b.id] !== undefined) && (!layout.hasResult || heights[RESULT_ID] !== undefined)
 
   const onNodesChange = useCallback((changes: NodeChange<CanvasNode>[]) => {
     const seen: Record<string, number> = {}
@@ -187,6 +188,7 @@ function CanvasInner({ detail, mobile, focusRequest, onFocusHandled, deciding, o
 
   const changeFilter = (next: StepFilter) => {
     if (next === filter) return
+    setTrace(null)
     setPlaying(false)
     setViewIndex(null)
     known.current = null
@@ -274,11 +276,19 @@ function CanvasInner({ detail, mobile, focusRequest, onFocusHandled, deciding, o
     return () => clearTimeout(timer)
   }, [playing, viewIndex, count, layout])
 
+  // ---- Chips ---------------------------------------------------------------------------------------------------
+
+  const onTrace = useCallback((target: string, sources: string[] | null) => {
+    setTrace(sources && sources.length > 0 ? { target, sources } : null)
+  }, [])
+  const onShow = useCallback((id: string) => setPendingShow(id), [])
+  const traced = useMemo(() => new Set(trace?.sources ?? []), [trace])
+
   // ---- Render --------------------------------------------------------------------------------------------------
 
   const view = useMemo<CanvasView>(
-    () => ({ numbers: layout.numbers, selectedId, viewIndex, deciding, isNew, onSelect: select, onDecide }),
-    [layout.numbers, selectedId, viewIndex, deciding, isNew, select, onDecide],
+    () => ({ numbers: layout.numbers, selectedId, viewIndex, deciding, traced, isNew, onSelect: select, onDecide, onTrace, onShow }),
+    [layout.numbers, selectedId, viewIndex, deciding, traced, isNew, select, onDecide, onTrace, onShow],
   )
   const selectedStep = selectedId ? steps.find((s) => s.id === selectedId) : undefined
   const empty = layout.cloud.length === 0 && !result
@@ -331,6 +341,7 @@ function CanvasInner({ detail, mobile, focusRequest, onFocusHandled, deciding, o
           </ReactFlow>
         </CanvasViewContext.Provider>
         <LaneRail lanes={layout.lanes} />
+        <ColumnRuler columns={layout.columns} viewIndex={viewIndex} />
         {selectedStep && (
           <Inspector
             step={selectedStep}
@@ -352,12 +363,12 @@ function CanvasInner({ detail, mobile, focusRequest, onFocusHandled, deciding, o
         )}
         <div className="legend">
           <span className="lg">
-            <i />
-            Next step
+            <i className="wire" />
+            Made here, used later
           </span>
           <span className="lg">
-            <i className="flow" />
-            Passes a value
+            <span className="chip-from">from 2</span>
+            Found earlier: hover to trace
           </span>
           <span className="lg-hint">Drag to move · ⌘ or Ctrl + scroll, or pinch, to zoom</span>
         </div>

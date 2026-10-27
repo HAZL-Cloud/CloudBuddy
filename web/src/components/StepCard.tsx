@@ -1,16 +1,18 @@
 import type { KeyboardEvent, MouseEvent } from 'react'
 import { clock } from '../format'
+import type { Chip } from '../layout'
 import type { Decision, Step } from '../types'
 import { Icon } from './Icon'
 import {
   ActionChip,
   AdapterNote,
+  CarriedNote,
+  ChipList,
   DecisionButtons,
   FactList,
   StatusLine,
   Stamp,
   TagList,
-  UsesLines,
   Warning,
   type Deciding,
 } from './StepParts'
@@ -27,9 +29,36 @@ export interface StepCardProps {
   deciding: Deciding | null
   onSelect: (id: string, viaKeyboard?: boolean) => void
   onDecide: (step: Step, decision: Decision) => void
+  /** Values found earlier, shown as chips. */
+  chips?: Chip[]
+  /** Values a line brings in from a step that created them. */
+  carried?: Step['uses']
+  /** True while a chip elsewhere traces a value back to this card. */
+  traced?: boolean
+  onTrace?: (stepId: string, sources: string[] | null) => void
+  onShow?: (stepId: string) => void
 }
 
-export function StepCard({ step, number, numbers, selected, current, future, enter, deciding, onSelect, onDecide }: StepCardProps) {
+const NONE: never[] = []
+const nothing = () => {}
+
+export function StepCard({
+  step,
+  number,
+  numbers,
+  selected,
+  current,
+  future,
+  enter,
+  deciding,
+  onSelect,
+  onDecide,
+  chips = NONE,
+  carried = NONE,
+  traced = false,
+  onTrace = nothing,
+  onShow = nothing,
+}: StepCardProps) {
   const approval = step.approval
   const asking = step.status === 'waiting' && approval?.state === 'pending'
   const cls = [
@@ -41,6 +70,7 @@ export function StepCard({ step, number, numbers, selected, current, future, ent
     current ? 'current' : '',
     future ? 'future' : '',
     enter ? 'enter' : '',
+    traced ? 'traced' : '',
   ]
     .filter(Boolean)
     .join(' ')
@@ -81,7 +111,8 @@ export function StepCard({ step, number, numbers, selected, current, future, ent
       {step.resource && <div className="card-res">{step.resource}</div>}
       <TagList tags={step.tags} />
       <AdapterNote step={step} />
-      <UsesLines step={step} numbers={numbers} />
+      <ChipList chips={chips} numbers={numbers} onTrace={(sources) => onTrace(step.id, sources)} onShow={onShow} />
+      <CarriedNote carried={carried} numbers={numbers} />
       <FactList facts={step.facts} />
       {asking && approval ? (
         <>

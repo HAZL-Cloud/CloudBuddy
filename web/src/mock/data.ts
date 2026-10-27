@@ -322,6 +322,7 @@ export function deployConv(): ConversationDetail {
       id: 'd4', ...aws, product: 'S3', action: 'change', time: '20:13:04', ms: 700,
       title: 'Blocked public access to the bucket', resource: 'shipyard-web-prod',
       facts: [['Public access', 'Blocked (all 4 settings)']],
+      uses: [{ fromStepId: 'd3', what: 'bucket' }],
       api: 's3:PutPublicAccessBlock',
       command: 'aws s3api put-public-access-block --bucket shipyard-web-prod --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true',
       why: 'Visitors will reach the site through CloudFront, so the bucket itself stays private.',
@@ -338,6 +339,7 @@ export function deployConv(): ConversationDetail {
       id: 'd5', ...aws, product: 'S3', action: 'create', time: '20:13:19', ms: 6400,
       title: 'Uploaded the built site', resource: 's3://shipyard-web-prod/',
       facts: [['Files', '42'], ['Size', '3.1 MB']],
+      uses: [{ fromStepId: 'd3', what: 'bucket' }],
       api: 's3:PutObject × 42', command: 'aws s3 sync ./dist s3://shipyard-web-prod',
       why: 'Copies the files in ./dist into the new bucket.',
       output: 'upload: dist/index.html to s3://shipyard-web-prod/index.html\nupload: dist/assets/app-4f9c1e.js to s3://shipyard-web-prod/assets/app-4f9c1e.js\n… 40 more files',
@@ -362,6 +364,7 @@ export function deployConv(): ConversationDetail {
     mk({
       id: 'd8', ...aws, product: 'S3', action: 'delete', tags: ['irreversible'], time: '20:15:02', ms: 3900,
       title: 'Delete bucket shipyard-web-staging-old', resource: 'arn:aws:s3:::shipyard-web-staging-old',
+      uses: [{ fromStepId: 'd2', what: 'bucket' }],
       api: 's3:DeleteObject × 318, then s3:DeleteBucket', command: 'aws s3 rb s3://shipyard-web-staging-old --force',
       why: 'You asked me to clean up the old staging bucket. I checked: no CloudFront distribution or DNS record points to it.',
       output: 'delete: s3://shipyard-web-staging-old/index.html\n… 317 more files\nremove_bucket: shipyard-web-staging-old',
@@ -374,6 +377,7 @@ export function deployConv(): ConversationDetail {
       id: 'd9', ...aws, product: 'CloudFront', action: 'read', time: '20:15:21', ms: 1100,
       title: 'Checked the site is live', resource: 'd3k9x7f2m1q8.cloudfront.net',
       facts: [['Status', 'Deployed']],
+      uses: [{ fromStepId: 'd6', what: 'distribution ID' }],
       api: 'cloudfront:GetDistribution', command: 'aws cloudfront get-distribution --id E2QW8XK4N1ZP7B --query Distribution.Status',
       why: 'Confirms the new site is answering before I call it done.', output: '"Deployed"',
     }),
@@ -503,6 +507,7 @@ export function ec2Conv(): ConversationDetail {
     mk({
       id: 'e4', ...aws, action: 'delete', tags: ['irreversible'], day: 4, time: '14:08:51', ms: 2000,
       title: 'Terminate server test-api-old', resource: 'i-0a7f3c91e2b4d5f68',
+      uses: [{ fromStepId: 'e1', what: 'server ID' }],
       api: 'ec2:TerminateInstances', command: 'aws ec2 terminate-instances --instance-ids i-0a7f3c91e2b4d5f68',
       why: 'Unused for over a month, and its disk is backed up.',
       output: '{\n  "TerminatingInstances": [{\n    "InstanceId": "i-0a7f3c91e2b4d5f68",\n    "CurrentState": { "Name": "shutting-down" }\n  }]\n}',
@@ -514,6 +519,7 @@ export function ec2Conv(): ConversationDetail {
     mk({
       id: 'e5', ...aws, action: 'delete', status: 'denied', tags: ['irreversible'], day: 4, time: '14:09:30',
       title: 'Terminate server test-db-2', resource: 'i-0c19e7a4b2f6d8e31',
+      uses: [{ fromStepId: 'e1', what: 'server ID' }],
       api: 'ec2:TerminateInstances', command: 'aws ec2 terminate-instances --instance-ids i-0c19e7a4b2f6d8e31',
       why: 'Unused for over a month.',
       approval: ask('ap-e5', 'denied', "It's a delete, and its disk has no backup.", {

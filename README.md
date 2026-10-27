@@ -13,7 +13,7 @@ You approve or deny right on the canvas.
 ![The CloudBuddy canvas](docs/screenshot.jpg)
 
 - **Chat** with the agent, like the Claude desktop app.
-- **Canvas** beside the chat: one card per cloud step, one lane per provider, arrows between steps, and blue arrows when a value from one step is used by another.
+- **Canvas** beside the chat: one card per cloud step, left to right in order, one lane per provider. Back-to-back reads stack into one card. A line runs from something a step created to each later step that builds on it; a value found earlier is a chip you can hover to trace.
 - **Approvals** before deletes, payments, sends and live-mode changes, with what will be lost and the agent's reason.
 - **History**: every chat keeps its canvas. Reopen it, replay it step by step.
 - **Connections**: which CLIs and MCP servers the agent can reach, who they are signed in as, and a rule per connection (Off, Read-only, Ask before every change…).

@@ -27,14 +27,23 @@
 .lane{width:100%;height:100%;border-bottom:1px dashed var(--line);pointer-events:none}
 .lane.a{background:var(--lane)}
 .cb-handle{opacity:0;pointer-events:none;width:1px;height:1px;min-width:0;min-height:0;border:0}
-.cb-edge{fill:none;stroke:var(--edge);stroke-width:1.6;transition:opacity .3s}
-.cb-edge.gate{stroke:var(--delete);stroke-dasharray:5 5}
-.cb-edge.flow{stroke:var(--accent);stroke-width:2}
-.cb-edge.extra{stroke-dasharray:2 5;stroke-linecap:round}
-.cb-edge.fut{opacity:.12}
-.ah{fill:var(--edge)}
-.ahg{fill:var(--delete)}
-.ahf{fill:var(--accent)}
+/* Lines: something a step created, to each later step that builds on it. One colour per line. */
+.cb-wire{fill:none;stroke-width:2;stroke-linejoin:round;transition:opacity .3s}
+.cb-wire.trace{stroke:var(--accent);stroke-width:1.6;stroke-dasharray:5 4}
+.cb-dot{transition:opacity .3s}
+.h0{--wire:var(--wire-0)}.h1{--wire:var(--wire-1)}.h2{--wire:var(--wire-2)}.h3{--wire:var(--wire-3)}
+.cb-wire[class*=" h"]{stroke:var(--wire)}
+.cb-dot,.ah{fill:var(--wire)}
+.ah.trace{fill:var(--accent)}
+.cb-wire.fut,.cb-dot.fut,.wire-label.fut{opacity:.12}
+.wire-label{position:absolute;left:0;top:0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1px 8px;border-radius:999px;background:var(--card);border:1.5px solid var(--wire);color:var(--wire);font:600 11px/16px var(--f-body);pointer-events:none;transition:opacity .3s}
+/* The step ruler along the top: left to right is the order. */
+.ruler{position:absolute;left:0;right:0;top:0;height:30px;pointer-events:none;z-index:5;background:linear-gradient(var(--canvas) 60%,transparent)}
+.ruler-line{position:absolute;left:0;top:15px;height:0;border-top:1.5px solid var(--edge)}
+.ruler-line::after{content:"";position:absolute;right:-2px;top:-5.5px;border:4.5px solid transparent;border-left:7px solid var(--edge);border-right:0}
+.ruler-n{position:absolute;left:0;top:6px;padding:0 7px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font:600 11px/16px var(--f-mono);color:var(--ink-2);white-space:nowrap;transition:opacity .3s}
+.ruler-n.fut{opacity:.35}
+.ruler-h{position:absolute;left:0;top:6px;padding:0 9px 0 16px;background:var(--canvas);font:600 10px/18px var(--f-body);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
 .marker-defs{position:absolute;width:0;height:0;overflow:hidden}
 .rail{position:absolute;left:0;top:0;width:0;height:100%;pointer-events:none;z-index:5}
 .rail-l{position:absolute;left:0;top:0;display:flex;align-items:baseline;gap:7px;padding:5px 11px 5px 16px;background:var(--panel);border:1px solid var(--line);border-left:0;border-radius:0 8px 8px 0;box-shadow:var(--shadow);white-space:nowrap;transition:opacity .2s}
@@ -42,8 +51,8 @@
 .rail-l span{font:600 10px var(--f-body);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
 .legend{position:absolute;right:16px;bottom:12px;z-index:6;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;font-size:11.5px;color:var(--ink-2);background:var(--panel);border:1px solid var(--line);padding:5px 10px;border-radius:8px;pointer-events:none}
 .lg{display:inline-flex;align-items:center;gap:6px}
-.lg i{display:inline-block;width:20px;height:0;border-top:2px solid var(--edge)}
-.lg i.flow{border-top-color:var(--accent)}
+.lg i{display:inline-block;width:20px;height:0;border-top:2px solid var(--wire-0)}
+.legend .chip-from{cursor:default}
 .lg-hint{color:var(--ink-3)}
 
 /* Step cards */
@@ -65,8 +74,24 @@
 .tag-irreversible{color:var(--delete);border-color:var(--delete)}
 .tag-money{color:var(--create);border-color:var(--create)}
 .tag-people{color:var(--send);border-color:var(--send)}
-.uses{display:flex;align-items:flex-start;gap:6px;font-size:12px;color:var(--accent);line-height:1.35}
-.uses .ic{margin-top:1px}
+/* Chips: values found earlier. Hover traces them back; a click shows where they came from. */
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip-from{display:inline-flex;align-items:center;gap:4px;max-width:100%;padding:2px 8px 2px 6px;border-radius:999px;border:1px solid var(--accent-ring);background:var(--accent-soft);color:var(--accent);font:500 11.5px/16px var(--f-body);cursor:pointer}
+.chip-from span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip-from .ic{width:12px;height:12px;flex:none}
+button.chip-from:hover,button.chip-from:focus-visible{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.card.traced{outline:2px dashed var(--accent);outline-offset:4px}
+/* A stack of back-to-back reads */
+.card.stack{cursor:default;box-shadow:5px -5px 0 -1px var(--card),5px -5px 0 0 var(--line),var(--shadow)}
+.card.stack.selected,.card.stack.current{box-shadow:0 0 0 3px var(--accent-ring),5px -5px 0 -1px var(--card),5px -5px 0 0 var(--line),var(--shadow-lift)}
+.stack-rows{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.stack-row{display:flex;align-items:center;gap:8px;width:calc(100% + 12px);margin:0 -6px;padding:4px 6px;border:0;border-radius:6px;background:none;text-align:left;font:13px/18px var(--f-body);color:var(--ink);cursor:pointer;transition:opacity .3s}
+.stack-row:hover{background:var(--line-soft)}
+.stack-row.on{background:var(--accent-soft);color:var(--accent)}
+.stack-row.future{opacity:.25}
+.stack-row .n{flex:none;min-width:18px;font-size:11px;color:var(--ink-3)}
+.stack-row .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stack-more{align-self:flex-start;padding:0 2px}
 .generic{display:flex;align-items:flex-start;gap:6px;padding:6px 8px;border-radius:6px;background:var(--read-soft);font-size:11.5px;line-height:1.35;color:var(--ink-2)}
 .generic .ic{margin-top:1px}
 .facts{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;margin:0;font-size:12px}

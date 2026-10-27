@@ -1,7 +1,7 @@
 import { useReactFlow, useViewport } from '@xyflow/react'
 import { prefersReducedMotion } from '../hooks'
 import { clamp } from '../camera'
-import type { Lane } from '../layout'
+import { CARD_W, type Column, type Lane } from '../layout'
 import { countActions } from '../tally'
 import type { Step } from '../types'
 import { ACTIONS, TALLY_ORDER } from '../vocab'
@@ -30,6 +30,33 @@ export function ZoomControls({ onFit }: { onFit: () => void }) {
   )
 }
 
+const RULER_H = 30
+
+/** Step numbers pinned to the top edge, one per column. Left to right is the order. */
+export function ColumnRuler({ columns, viewIndex }: { columns: Column[]; viewIndex: number | null }) {
+  const { x, zoom } = useViewport()
+  const first = columns[0]
+  const last = columns[columns.length - 1]
+  if (!first || !last) return null
+  const left = x + first.x * zoom
+  const right = x + (last.x + CARD_W) * zoom
+  return (
+    <div className="ruler" aria-hidden="true">
+      <div className="ruler-line" style={{ transform: `translateX(${left}px)`, width: Math.max(0, right - left) }} />
+      {columns.map((c) => (
+        <span
+          key={c.x}
+          className={viewIndex !== null && c.index > viewIndex ? 'ruler-n fut' : 'ruler-n'}
+          style={{ transform: `translateX(${x + (c.x + CARD_W / 2) * zoom}px) translateX(-50%)` }}
+        >
+          {c.label}
+        </span>
+      ))}
+      <span className="ruler-h">Step</span>
+    </div>
+  )
+}
+
 /** Lane names pinned to the left edge. They follow vertical panning and zoom, but not horizontal panning. */
 export function LaneRail({ lanes }: { lanes: Lane[] }) {
   const { y, zoom } = useViewport()
@@ -43,7 +70,7 @@ export function LaneRail({ lanes }: { lanes: Lane[] }) {
           <div
             key={lane.id}
             className="rail-l"
-            style={{ transform: `translateY(${clamp(top + 10, 10, bottom - 40)}px)`, opacity: hidden ? 0 : 1 }}
+            style={{ transform: `translateY(${clamp(top + 10, RULER_H + 6, bottom - 40)}px)`, opacity: hidden ? 0 : 1 }}
           >
             <b>{lane.name}</b>
             <span>{lane.sub}</span>

@@ -63,10 +63,31 @@ describe('StepCard', () => {
     expect(screen.getByText(/No Google Cloud adapter\./)).toHaveTextContent('Guessed from the word “update”.')
   })
 
-  it('says which earlier step it takes a value from', () => {
-    setup(find('n7'))
-    expect(screen.getByText('Uses the plan ID from step 5')).toBeInTheDocument()
-    expect(screen.getByText('Uses the webhook secret from step 6')).toBeInTheDocument()
+  it('tells screen readers what the lines bring in', () => {
+    setup(find('n7'), {
+      carried: [
+        { fromStepId: 'n5', what: 'plan ID' },
+        { fromStepId: 'n6', what: 'webhook secret' },
+      ],
+    })
+    expect(screen.getByText(/Uses the plan ID from step 5\./).closest('.sr-only')).not.toBeNull()
+    expect(screen.getByText(/Uses the webhook secret from step 6\./)).toBeInTheDocument()
+  })
+
+  it('shows values found earlier as chips that trace on hover and show the step on click', async () => {
+    const onTrace = vi.fn()
+    const onShow = vi.fn()
+    const props = setup(find('n7'), { chips: [{ from: ['n1', 'n2'], local: false, whats: ['domain'] }], onTrace, onShow })
+    const chip = screen.getByRole('button', { name: 'Uses the domain from 1–2. Show step 1.' })
+    expect(chip).toHaveTextContent('from 1–2: domain')
+    await userEvent.hover(chip)
+    expect(onTrace).toHaveBeenLastCalledWith('n7', ['n1', 'n2'])
+    await userEvent.unhover(chip)
+    expect(onTrace).toHaveBeenLastCalledWith('n7', null)
+    await userEvent.click(chip)
+    expect(onShow).toHaveBeenCalledWith('n1')
+    // A chip click is not a click on the card.
+    expect(props.onSelect).not.toHaveBeenCalled()
   })
 
   it('shows what will happen, the agent’s reason, and the buttons while waiting', () => {
