@@ -1,0 +1,89 @@
+# Hand-written AWS rules. They win over aws-generated.yaml.
+# Format: docs/adapters.md. Rules only add caution on top of the generic
+# layer (D-026); "reviewed: true" is the only way a call counts as a read.
+provider: AWS
+cli: [aws]
+products: {s3: S3, s3api: S3, ec2: EC2, iam: IAM, sts: Account, cloudfront: CloudFront, lambda: Lambda, rds: RDS,
+  dynamodb: DynamoDB, sns: SNS, sqs: SQS, cloudwatch: CloudWatch, logs: CloudWatch Logs, ecs: ECS, eks: EKS, ecr: ECR,
+  route53: Route 53, secretsmanager: Secrets Manager, ssm: Systems Manager, cloudformation: CloudFormation,
+  apigateway: API Gateway, kms: KMS, acm: ACM, elbv2: Load Balancers, ses: SES, sesv2: SES, organizations: Organizations,
+  budgets: Budgets, ce: Cost Explorer}
+rules:
+  - {match: [sts, get-caller-identity], action: read, reviewed: true, title: "Checked which AWS account is signed in"}
+  - {match: [configure, list], action: read, reviewed: true, product: Account}
+  - {match: [configure, get], action: read, reviewed: true, product: Account}
+  - {match: [s3, ls], action: read, reviewed: true, title: "Listed S3"}
+  - {match: [s3, presign], action: read, reviewed: true}
+  - {match: [s3, cp], action: create, title: "Copied files with S3"}
+  - {match: [s3, sync], action: create, title: "Synced files to S3"}
+  - {match: [s3, mv], action: change, loss_title: "What will happen", loss: ["Moves the files: the originals are removed"]}
+  - match: [s3, rm]
+    action: delete
+    tags: [irreversible]
+    loss: ["Deletes the S3 objects", "Unless the bucket keeps versions, they can't be recovered"]
+  - match: [s3, rb]
+    action: delete
+    tags: [irreversible]
+    loss: ["Deletes the bucket", "With --force, every object in it too", "Unless the bucket keeps versions, nothing can be recovered"]
+  - match: [s3api, delete-bucket]
+    action: delete
+    tags: [irreversible]
+    loss: ["Deletes the bucket"]
+  - match: [s3api, delete-object]
+    action: delete
+    tags: [irreversible]
+    loss: ["Deletes the object; without versioning it can't be recovered"]
+  - match: [s3api, delete-objects]
+    action: delete
+    tags: [irreversible]
+    loss: ["Deletes every object in the list; without versioning they can't be recovered"]
+  - match: [ec2, terminate-instances]
+    action: delete
+    tags: [irreversible]
+    loss: ["Terminates the servers: they can't be started again", "Disks set to delete on termination are deleted too"]
+  - match: [rds, delete-db-instance]
+    action: delete
+    tags: [irreversible]
+    loss: ["Deletes the database", "Unless a final snapshot is kept, the data is gone"]
+  - match: [rds, delete-db-cluster]
+    action: delete
+    tags: [irreversible]
+    loss: ["Deletes the database cluster", "Unless a final snapshot is kept, the data is gone"]
+  - match: [dynamodb, delete-table]
+    action: delete
+    tags: [irreversible]
+    loss: ["Deletes the table and all its items"]
+  - match: [kms, schedule-key-deletion]
+    action: delete
+    tags: [irreversible]
+    loss: ["After the waiting period the key is destroyed", "Anything encrypted with it can never be read again"]
+  - match: [secretsmanager, delete-secret]
+    action: delete
+    tags: [irreversible]
+  - match: [cloudformation, delete-stack]
+    action: delete
+    tags: [irreversible]
+    loss: ["Deletes the stack and every resource it created"]
+  - match: [ecr, batch-delete-image]
+    action: delete
+    tags: [irreversible]
+  - {match: [ec2, purchase-reserved-instances-offering], action: create, tags: [money, irreversible]}
+  - {match: [ec2, purchase-host-reservation], action: create, tags: [money, irreversible]}
+  - {match: [savingsplans, create-savings-plan], action: create, tags: [money, irreversible]}
+  - {match: [route53domains, register-domain], action: create, tags: [money, irreversible]}
+  - {match: [route53domains, transfer-domain], action: create, tags: [money, irreversible]}
+  - {match: [organizations, close-account], action: delete, tags: [irreversible]}
+  - {match: [organizations, leave-organization], action: delete, tags: [irreversible]}
+  - {match: [ses, send-email], action: send, tags: [people, irreversible]}
+  - {match: [sesv2, send-email], action: send, tags: [people, irreversible]}
+  - {match: [ses, send-raw-email], action: send, tags: [people, irreversible]}
+  - {match: [ses, send-bulk-templated-email], action: send, tags: [people, irreversible]}
+  - {match: [sns, publish], action: send, tags: [people, irreversible], loss: ["Every subscriber of the topic gets the message"]}
+  - {match: [sns, publish-batch], action: send, tags: [people, irreversible]}
+  - {match: [lambda, invoke], action: create, runs_code: false, loss_title: "What will happen", loss: ["Runs the function, which can do anything its code does"]}
+  - {match: ["*", wait, "*"], action: read, reviewed: true}
+http:
+  hosts: [amazonaws.com]
+  rules:
+    - {method: GET, path: "*", action: read, reviewed: true}
+    - {method: HEAD, path: "*", action: read, reviewed: true}

@@ -1,0 +1,66 @@
+# Stripe: CLI, MCP server and HTTP API. Live mode always asks (D-025); the
+# live tag comes from --live, sk_live_ keys or livemode in a request.
+provider: Stripe
+cli: [stripe]
+live_flags: ["--live"]
+products: {customers: Customers, charges: Charges, refunds: Refunds, payouts: Payouts, transfers: Transfers,
+  prices: Prices, products: Products, subscriptions: Subscriptions, invoices: Invoices, payment_intents: Payments,
+  payment_links: Payment links, webhook_endpoints: Webhooks, coupons: Coupons, balance: Balance, events: Events,
+  checkout: Checkout, accounts: Connected accounts}
+rules:
+  - {match: ["*", list], action: read, reviewed: true}
+  - {match: ["*", retrieve], action: read, reviewed: true}
+  - {match: ["*", search], action: read, reviewed: true}
+  - {match: [get], action: read, reviewed: true, product: API}
+  - {match: [balance], action: read, reviewed: true}
+  - {match: [status], action: read, reviewed: true, product: Account}
+  - {match: [logs, tail], action: read, reviewed: true, product: Logs}
+  - {match: [config], action: read, reviewed: true, product: Account}
+  - {match: [refunds, create], action: create, tags: [money, irreversible], loss: ["Sends money back to the customer", "A refund can't be reversed"]}
+  - {match: [payouts, create], action: create, tags: [money, irreversible], loss: ["Moves money to the bank account"]}
+  - {match: [transfers, create], action: create, tags: [money, irreversible], loss: ["Moves money to a connected account"]}
+  - {match: [charges, create], action: create, tags: [money, irreversible], loss: ["Charges the customer's payment method"]}
+  - {match: [charges, capture], action: create, tags: [money, irreversible], loss: ["Captures the held payment"]}
+  - {match: [payment_intents, confirm], action: create, tags: [money, irreversible], loss: ["Tries to charge the customer"]}
+  - {match: [payment_intents, capture], action: create, tags: [money, irreversible]}
+  - {match: [invoices, pay], action: create, tags: [money, irreversible], loss: ["Charges the customer for the invoice"]}
+  - {match: [invoices, finalize_invoice], action: change, tags: [money], loss: ["The invoice can't be edited afterwards and may be charged automatically"]}
+  - {match: [invoices, send_invoice], action: send, tags: [people, money]}
+  - {match: [subscriptions, create], action: create, tags: [money], loss: ["Starts billing the customer"]}
+  - {match: [subscriptions, cancel], action: delete, tags: [irreversible], loss: ["Ends the customer's subscription"]}
+  - {match: [prices, create], action: create, live_tags: [irreversible], loss_title: "What will happen", loss: ["A price's amount can't be changed later, only archived"]}
+  - {match: [products, create], action: create}
+  - {match: [payment_links, create], action: create}
+  - {match: [webhook_endpoints, create], action: create}
+  - {match: [customers, create], action: create}
+  - {match: ["*", update], action: change}
+  - {match: ["*", delete], action: delete, tags: [irreversible]}
+  - {match: [trigger, "*"], action: create, product: Test events}
+mcp:
+  servers: [stripe]
+  tools:
+    - {match: "list_*", action: read, reviewed: true}
+    - {match: "retrieve_*", action: read, reviewed: true}
+    - {match: "search_*", action: read, reviewed: true}
+    - {match: "get_*", action: read, reviewed: true}
+    - {match: "*refund*", action: create, tags: [money, irreversible]}
+    - {match: "*payout*", action: create, tags: [money, irreversible]}
+    - {match: "*transfer*", action: create, tags: [money, irreversible]}
+    - {match: "finalize_invoice", action: change, tags: [money]}
+    - {match: "cancel_*", action: delete, tags: [irreversible]}
+    - {match: "create_*", action: create}
+    - {match: "update_*", action: change}
+http:
+  hosts: [api.stripe.com]
+  rules:
+    - {method: GET, path: "*", action: read, reviewed: true}
+    - {method: POST, path: "/v1/refunds*", action: create, tags: [money, irreversible]}
+    - {method: POST, path: "/v1/payouts*", action: create, tags: [money, irreversible]}
+    - {method: POST, path: "/v1/transfers*", action: create, tags: [money, irreversible]}
+    - {method: POST, path: "/v1/charges*", action: create, tags: [money, irreversible]}
+    - {method: POST, path: "/v1/payment_intents/*/confirm", action: create, tags: [money, irreversible]}
+    - {method: POST, path: "/v1/payment_intents/*/capture", action: create, tags: [money, irreversible]}
+    - {method: POST, path: "/v1/invoices/*/pay", action: create, tags: [money, irreversible]}
+    - {method: POST, path: "/v1/subscriptions/*/cancel", action: delete, tags: [irreversible]}
+    - {method: DELETE, path: "*", action: delete, tags: [irreversible]}
+    - {method: POST, path: "*", action: create}

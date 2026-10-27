@@ -284,15 +284,12 @@ func segmentDraft(s segment, c Call, env Env, adapters *Adapters) Draft {
 	if s.Prog == "" {
 		return Draft{Kind: "local", Action: model.ActionRead, ReviewedRead: true}
 	}
-	if adapters != nil {
-		if ad, ok := adapters.matchShell(s); ok {
-			generic := genericCloud(s, env)
-			mergeCautious(&ad, generic)
-			return ad
-		}
-	}
 	if _, ok := cloudCLIs[s.Prog]; ok {
 		d := genericCloud(s, env)
+		if ad, matched := adapters.matchShell(s, env); matched {
+			mergeCautious(&ad, d)
+			d = ad
+		}
 		if !pinnedOK(s, env) {
 			d.Network, d.Identity = "B", Identity{Resolved: false, Label: "a copy of " + s.Prog + " that isn't the installed one"}
 			d.raise(model.ActionUnknown)
@@ -300,7 +297,7 @@ func segmentDraft(s segment, c Call, env Env, adapters *Adapters) Draft {
 		return d
 	}
 	if httpClients[s.Prog] {
-		return httpDraft(s, env)
+		return httpDraft(s, env, adapters)
 	}
 	if s.Prog == "git" {
 		return gitDraft(s, c)
@@ -346,8 +343,15 @@ func pinnedOK(s segment, env Env) bool {
 }
 
 // mergeCautious folds the generic layer's view into an adapter's (D-026).
+// The adapter can make a call more precise, never less cautious.
 func mergeCautious(ad *Draft, g Draft) {
 	ad.raise(g.Action)
+	if g.Opaque {
+		ad.Opaque = true
+	}
+	if g.GuessWord != "" && ad.GuessWord == "" {
+		ad.GuessWord = g.GuessWord
+	}
 	if g.Action.Caution() > model.ActionRead.Caution() {
 		ad.ReviewedRead = false
 	}
@@ -787,7 +791,7 @@ func resourceOf(args []string) string {
 
 // ---------- HTTP clients ----------
 
-func httpDraft(s segment, env Env) Draft {
+func httpDraft(s segment, env Env, adapters *Adapters) Draft {
 	method := ""
 	if m, ok := flagValue(s.Args, "-X", "--request", "--method"); ok {
 		method = strings.ToUpper(m)
@@ -855,6 +859,14 @@ func httpDraft(s segment, env Env) Draft {
 	}
 	if d.Action == model.ActionDelete {
 		d.addTag(model.TagIrreversible)
+	}
+	if ad, ok := adapters.matchHTTP(host, method, path); ok {
+		ad.Resource, ad.API, ad.Identity = d.Resource, d.API, d.Identity
+		if ad.Product == "" {
+			ad.Product = d.Product
+		}
+		mergeCautious(&ad, d)
+		return ad
 	}
 	return d
 }

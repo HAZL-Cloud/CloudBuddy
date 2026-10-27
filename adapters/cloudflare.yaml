@@ -1,0 +1,34 @@
+# Cloudflare: wrangler and the HTTP API. Commands that build and upload
+# project code (deploy, dev, publish) count as project code with network
+# (D-029 kind B).
+provider: Cloudflare
+cli: [wrangler]
+products: {kv: Workers KV, r2: R2, d1: D1, pages: Pages, secret: Secrets, queues: Queues, deployments: Deployments}
+rules:
+  - {match: [whoami], action: read, reviewed: true, product: Account}
+  - {match: [tail], action: read, reviewed: true, product: Logs}
+  - {match: ["*", list], action: read, reviewed: true}
+  - {match: ["*", "*", list], action: read, reviewed: true}
+  - {match: ["*", "*", get], action: read, reviewed: true}
+  - {match: [deploy], action: create, runs_code: true, product: Workers}
+  - {match: [publish], action: create, runs_code: true, product: Workers}
+  - {match: [dev], action: create, runs_code: true, product: Workers}
+  - {match: [versions, upload], action: create, runs_code: true, product: Workers}
+  - {match: [pages, deploy], action: create, product: Pages}
+  - {match: [delete], action: delete, tags: [irreversible], product: Workers, loss: ["Deletes the Worker"]}
+  - {match: ["*", "*", delete], action: delete, tags: [irreversible]}
+  - {match: ["*", delete], action: delete, tags: [irreversible]}
+  - {match: [d1, execute], action: unknown, product: D1, loss: ["Runs SQL against the database; it may change or delete data"]}
+  - {match: ["*", "*", create], action: create}
+  - {match: ["*", create], action: create}
+  - {match: ["*", "*", put], action: change}
+  - {match: [secret, put], action: change}
+http:
+  hosts: [api.cloudflare.com]
+  rules:
+    - {method: GET, path: "*", action: read, reviewed: true}
+    - {method: DELETE, path: "*", action: delete, tags: [irreversible]}
+    - {method: POST, path: "/client/v4/zones/*/purge_cache", action: change}
+    - {method: POST, path: "*", action: create}
+    - {method: PUT, path: "*", action: change}
+    - {method: PATCH, path: "*", action: change}

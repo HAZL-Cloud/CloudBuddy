@@ -1,0 +1,26 @@
+# Resend: MCP server and HTTP API. Sending reaches real people and can't be
+# undone, so it always asks.
+provider: Resend
+mcp:
+  servers: [resend]
+  tools:
+    - {match: "send*", action: send, tags: [people, irreversible], loss: ["Delivers email to real people", "Email can't be unsent"]}
+    - {match: "*send*", action: send, tags: [people, irreversible], loss: ["Delivers email to real people", "Email can't be unsent"]}
+    - {match: "list*", action: read, reviewed: true}
+    - {match: "get*", action: read, reviewed: true}
+    - {match: "delete*", action: delete, tags: [irreversible]}
+    - {match: "remove*", action: delete, tags: [irreversible]}
+    - {match: "create*", action: create}
+    - {match: "update*", action: change}
+    - {match: "verify*", action: change}
+http:
+  hosts: [api.resend.com]
+  rules:
+    - {method: GET, path: "*", action: read, reviewed: true}
+    - {method: POST, path: "/emails*", action: send, tags: [people, irreversible], loss: ["Delivers email to real people", "Email can't be unsent"]}
+    - {method: POST, path: "/broadcasts/*/send", action: send, tags: [people, irreversible], loss: ["Sends the broadcast to everyone in the audience", "Email can't be unsent"]}
+    - {method: DELETE, path: "*", action: delete, tags: [irreversible]}
+    - {method: POST, path: "/domains/*/verify", action: change}
+    - {method: POST, path: "*", action: create}
+    - {method: PATCH, path: "*", action: change}
+    - {method: PUT, path: "*", action: change}
