@@ -16,7 +16,7 @@ rules:
   - {match: [configure, get], action: read, reviewed: true, product: Account}
   - {match: [s3, ls], action: read, reviewed: true, title: "Listed S3"}
   - {match: [s3, mb], action: create, reviewed: true, product: S3, title: "Created an S3 bucket"}
-  - {match: [s3, website], action: change, reviewed: true, product: S3}
+  - {match: [s3, website], action: change, product: S3, loss: ["Replaces the bucket's website settings"]}
   - {match: [s3, cp], action: create, title: "Copied files with S3", loss_title: "What will happen", loss: ["Files with the same name are replaced", "Without versioning, replaced files can't be recovered"]}
   - {match: [s3, sync], action: create, title: "Synced files to S3", loss_title: "What will happen", loss: ["Files with the same name are replaced", "Without versioning, replaced files can't be recovered"]}
   - {match: [s3, mv], action: delete, tags: [irreversible], loss: ["Moves the files: the originals are deleted after copying"]}
@@ -85,11 +85,10 @@ rules:
   - {match: [sns, publish-batch], action: send, tags: [people, irreversible]}
   - {match: [lambda, invoke], action: unknown, loss_title: "What will happen", loss: ["Runs the function, which can do anything its code does"]}
   - {match: [lambda, invoke-async], action: unknown, loss_title: "What will happen", loss: ["Runs the function, which can do anything its code does"]}
-  # Creates and changes a person reviewed: reversible, no money, no people.
+  # Creates and changes a person reviewed: reversible, no money, no people, and
+  # no actions that fire later on their own.
   - {match: [s3api, create-bucket], action: create, reviewed: true}
   - {match: [s3api, put-public-access-block], action: change, reviewed: true}
-  - {match: [s3api, put-bucket-tagging], action: change, reviewed: true}
-  - {match: [s3api, put-bucket-website], action: change, reviewed: true}
   - {match: [cloudfront, create-distribution], action: create, reviewed: true}
   - {match: [cloudfront, create-invalidation], action: change, reviewed: true}
   - {match: [cloudfront, create-origin-access-control], action: create, reviewed: true}
@@ -100,7 +99,8 @@ rules:
   - {match: [ec2, create-tags], action: change, reviewed: true}
   - {match: [ec2, create-security-group], action: create, reviewed: true}
   - {match: [ecr, create-repository], action: create, reviewed: true}
-  - {match: [cloudwatch, put-metric-alarm], action: create, reviewed: true}
+  # put-metric-alarm is not reviewed: an alarm's actions can terminate servers,
+  # notify people or run Lambda as soon as it is created (release review).
   - {match: ["*", wait, "*"], action: read, reviewed: true}
 http:
   hosts: [amazonaws.com]

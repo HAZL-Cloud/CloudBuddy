@@ -315,8 +315,8 @@ func shellDraft(c Call, env Env, adapters *Adapters) Draft {
 // may write; they may share a command with a cloud CLI.
 var safeTools = map[string]bool{"cd": true, "pwd": true, "echo": true, "printf": true, "true": true, "false": true,
 	"test": true, "[": true, "sleep": true, "date": true, "jq": true, "yq": true, "grep": true, "egrep": true,
-	"fgrep": true, "head": true, "tail": true, "wc": true, "sort": true, "uniq": true, "cut": true, "tr": true,
-	"column": true, "sed": true, "mkdir": true, "touch": true, "ls": true, "cat": true, "base64": true, "tee": true,
+	"fgrep": true, "head": true, "tail": true, "wc": true, "uniq": true, "cut": true, "tr": true,
+	"column": true, "mkdir": true, "touch": true, "ls": true, "cat": true, "base64": true, "tee": true,
 	"which": true, "basename": true, "dirname": true, "realpath": true, "diff": true, "stat": true, "du": true}
 
 // shellBuiltins change what later words mean (functions, aliases, exports,
@@ -331,9 +331,10 @@ var shellBuiltins = map[string]bool{"function": true, "alias": true, "unalias": 
 // choose a profile or region or change output. Anything else (LD_PRELOAD,
 // BASH_ENV, AWS_CONFIG_FILE, NODE_OPTIONS…) can load code or switch
 // accounts (release review).
+// (AWS_PAGER and PAGER name a program to run, so they aren't on it.)
 var envAllowed = map[string]bool{"AWS_PROFILE": true, "AWS_DEFAULT_PROFILE": true, "AWS_REGION": true,
-	"AWS_DEFAULT_REGION": true, "AWS_PAGER": true, "AWS_DEFAULT_OUTPUT": true, "CLOUDSDK_CORE_PROJECT": true,
-	"NO_COLOR": true, "TERM": true, "LANG": true, "LC_ALL": true, "TZ": true, "PAGER": true, "CI": true, "FORCE_COLOR": true}
+	"AWS_DEFAULT_REGION": true, "AWS_DEFAULT_OUTPUT": true, "CLOUDSDK_CORE_PROJECT": true,
+	"NO_COLOR": true, "TERM": true, "LANG": true, "LC_ALL": true, "TZ": true, "CI": true, "FORCE_COLOR": true}
 
 func pureSegment(s segment, env Env) bool {
 	for k := range s.Env {
@@ -1069,6 +1070,11 @@ func httpDraft(s segment, env Env, adapters *Adapters) Draft {
 	d.ReviewedRead = false
 	if len(methods) > 1 || strings.Contains(raw, "Action=") || strings.Contains(raw, "action=") {
 		d.Opaque = true // several methods, or an AWS-style Query API call
+	}
+	// -G moves request data into the query string, where it can name an
+	// action the URL doesn't show (release review round 2).
+	if hasFlag(s.Args, "-G", "--get") && hasFlag(s.Args, "-d", "--data", "--data-raw", "--data-binary", "--data-urlencode", "--json") {
+		d.Opaque = true
 	}
 	scanWarnings(&d, strings.Split(path, "/"))
 	if d.Action == model.ActionCreate && d.Provider != "Web" {

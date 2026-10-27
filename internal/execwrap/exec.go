@@ -50,7 +50,8 @@ func Main(args []string) int {
 	mark := config.Random(12)
 	env := []string{"CB_EXEC_MARK=" + mark}
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "CB_") || (info.Path != "" && strings.HasPrefix(kv, "PATH=")) {
+		if strings.HasPrefix(kv, "CB_") || (info.Path != "" && strings.HasPrefix(kv, "PATH=")) ||
+			strings.HasPrefix(kv, "AWS_PAGER=") || strings.HasPrefix(kv, "PAGER=") || strings.HasPrefix(kv, "GIT_PAGER=") {
 			continue
 		}
 		env = append(env, kv)
@@ -58,6 +59,8 @@ func Main(args []string) int {
 	if info.Path != "" {
 		env = append(env, "PATH="+info.Path)
 	}
+	// no pagers: a pager is a program the CLI would start
+	env = append(env, "AWS_PAGER=", "PAGER=cat", "GIT_PAGER=cat")
 	shell := "/bin/zsh"
 	if _, err := os.Stat(shell); err != nil {
 		shell = "/bin/sh"
