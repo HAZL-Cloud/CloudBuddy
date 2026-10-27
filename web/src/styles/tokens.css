@@ -1,0 +1,47 @@
+/* Design tokens from docs/mockup.html: light by default, dark by system setting or [data-theme=dark]. */
+:root{
+  --bg:#EDF0F4; --panel:#FAFBFC; --canvas:#E5E9EF; --grid:#C3CBD6; --card:#FFFFFF; --card-muted:#F5F6F8; --code-bg:#F3F5F8;
+  --ink:#141C27; --ink-2:#465365; --ink-3:#778396; --line:#D3D9E2; --line-soft:#E4E8EE; --edge:#97A3B3;
+  --accent:#2350C8; --accent-soft:#E1E8FA; --accent-ring:rgba(35,80,200,.22); --on-accent:#FFFFFF;
+  --read:#5B6A7D; --read-soft:#E5E9EF;
+  --create:#16794B; --create-soft:#D9EFE2;
+  --change:#9A5B00; --change-soft:#F7E7CB;
+  --send:#9C2F86; --send-soft:#F6DDF0;
+  --delete:#C0322A; --delete-soft:#FADFDB; --delete-ring:rgba(192,50,42,.2); --on-delete:#FFFFFF;
+  --lane:rgba(255,255,255,.5); --scrim:rgba(12,18,28,.38);
+  --shadow:0 1px 2px rgba(18,28,45,.06),0 6px 16px -8px rgba(18,28,45,.16);
+  --shadow-lift:0 2px 4px rgba(18,28,45,.08),0 16px 36px -12px rgba(18,28,45,.28);
+  --f-display:"Bricolage Grotesque","IBM Plex Sans",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F1318; --panel:#141920; --canvas:#0B0E12; --grid:#2A323D; --card:#181E26; --card-muted:#141920; --code-bg:#0F1419;
+    --ink:#E6EAF0; --ink-2:#AAB4C2; --ink-3:#768397; --line:#28303B; --line-soft:#1E252E; --edge:#4E5A6A;
+    --accent:#8CA6FF; --accent-soft:#1C2645; --accent-ring:rgba(140,166,255,.28); --on-accent:#0A1230;
+    --read:#A3AFBE; --read-soft:#222A35;
+    --create:#52C98D; --create-soft:#12301F;
+    --change:#F0AE45; --change-soft:#35270E;
+    --send:#F08AD6; --send-soft:#3A1633;
+    --delete:#FF7D70; --delete-soft:#3A1714; --delete-ring:rgba(255,125,112,.22); --on-delete:#230806;
+    --lane:rgba(255,255,255,.022); --scrim:rgba(0,0,0,.55);
+    --shadow:0 1px 2px rgba(0,0,0,.35),0 8px 18px -8px rgba(0,0,0,.5);
+    --shadow-lift:0 2px 4px rgba(0,0,0,.4),0 18px 40px -12px rgba(0,0,0,.65);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F1318; --panel:#141920; --canvas:#0B0E12; --grid:#2A323D; --card:#181E26; --card-muted:#141920; --code-bg:#0F1419;
+  --ink:#E6EAF0; --ink-2:#AAB4C2; --ink-3:#768397; --line:#28303B; --line-soft:#1E252E; --edge:#4E5A6A;
+  --accent:#8CA6FF; --accent-soft:#1C2645; --accent-ring:rgba(140,166,255,.28); --on-accent:#0A1230;
+  --read:#A3AFBE; --read-soft:#222A35;
+  --create:#52C98D; --create-soft:#12301F;
+  --change:#F0AE45; --change-soft:#35270E;
+  --send:#F08AD6; --send-soft:#3A1633;
+  --delete:#FF7D70; --delete-soft:#3A1714; --delete-ring:rgba(255,125,112,.22); --on-delete:#230806;
+  --lane:rgba(255,255,255,.022); --scrim:rgba(0,0,0,.55);
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 8px 18px -8px rgba(0,0,0,.5);
+  --shadow-lift:0 2px 4px rgba(0,0,0,.4),0 18px 40px -12px rgba(0,0,0,.65);
+  color-scheme:dark;
+}

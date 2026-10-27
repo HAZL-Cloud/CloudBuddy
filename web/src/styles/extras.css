@@ -1,0 +1,44 @@
+/* Pieces the mockup did not need: real-data states, the new-chat dialog, the signed-out page. */
+.btn:disabled,.send:disabled{opacity:.5;cursor:default}
+.btn:disabled:hover{border-color:var(--line)}
+.dot.bad{background:var(--delete)}
+.recent-sub.bad{color:var(--delete)}
+.runtime .dot.off{background:var(--line)}
+.status.bad{color:var(--delete)}
+.status.unk{color:var(--change)}
+.working .btn.link{margin-left:auto;padding-block:2px}
+
+.notice{display:flex;align-items:flex-start;gap:8px;padding:8px 11px;border-radius:9px;background:var(--line-soft);color:var(--ink-2);font-size:13px;line-height:1.4}
+.notice .ic{margin-top:2px}
+.notice.warning{background:var(--change-soft);color:var(--change)}
+.notice.error{background:var(--delete-soft);color:var(--delete)}
+
+.warn{display:flex;align-items:flex-start;gap:6px;padding:6px 8px;border-radius:6px;background:var(--change-soft);color:var(--ink);font-size:12px;line-height:1.35}
+.warn .ic{margin-top:1px;color:var(--change)}
+
+.empty{margin:auto;max-width:34ch;padding:24px;text-align:center;color:var(--ink-2);line-height:1.5;display:flex;flex-direction:column;align-items:center;gap:12px}
+.empty b{font:600 16px var(--f-display);color:var(--ink)}
+.empty p{margin:0}
+.canvas-empty{position:absolute;inset:0;z-index:5;display:grid;place-items:center;pointer-events:none}
+.canvas-empty .empty{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+
+.centered{min-height:100%;display:grid;place-items:center;padding:24px;background:var(--bg)}
+.centered .empty{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:32px 28px;max-width:40ch}
+.centered .brand-mark{width:40px;height:40px;border-radius:11px}
+.centered .brand-mark .ic{width:24px;height:24px}
+
+.dialog-scrim{position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:16px;background:var(--scrim)}
+.dialog{width:min(480px,100%);max-height:100%;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-lift);padding:18px 20px 20px;display:flex;flex-direction:column;gap:14px}
+.dialog form{display:flex;flex-direction:column;gap:14px}
+.dialog h2{margin:0;font:700 20px/1.2 var(--f-display);letter-spacing:-.01em}
+.dialog-actions{display:flex;justify-content:flex-end;gap:8px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font:600 11px var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.field input,.field select,.field textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:14px/1.45 var(--f-body)}
+.field input.mono{font:13px var(--f-mono)}
+.field textarea{resize:vertical;min-height:84px}
+.field input:focus,.field select:focus,.field textarea:focus{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
+.field-error{color:var(--delete);font-size:13px}
+
+.conn-row.unsupported .rule{cursor:not-allowed}
+.soon{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:var(--read-soft);color:var(--ink-2);font:600 10.5px var(--f-body);letter-spacing:.04em;text-transform:uppercase;vertical-align:middle}

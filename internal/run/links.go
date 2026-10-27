@@ -80,6 +80,44 @@ func (e *Engine) recordLinks(ctx context.Context, r *Run, stepID, output string)
 		toks[linkHash(key, v)] = what
 	}
 	_ = e.st.AddLinkTokens(ctx, r.ConvID, stepID, toks)
+	e.backfillLinks(ctx, r, stepID, key, toks)
+}
+
+// backfillLinks links later steps that already used a value before this
+// step's output was recorded (parallel tool calls, fast agents).
+func (e *Engine) backfillLinks(ctx context.Context, r *Run, producerID string, key []byte, toks map[string]string) {
+	steps, err := e.st.Steps(ctx, r.ConvID)
+	if err != nil {
+		return
+	}
+	seq := -1
+	for _, s := range steps {
+		if s.ID == producerID {
+			seq = s.Seq
+		}
+	}
+	for _, s := range steps {
+		if seq < 0 || s.Seq <= seq {
+			continue
+		}
+		what := ""
+		for v := range extractIDs(s.Command) {
+			if w, ok := toks[linkHash(key, v)]; ok {
+				what = w
+			}
+		}
+		if what == "" {
+			continue
+		}
+		_, _, _ = e.updateStepByID(ctx, r, s.ID, func(st *model.Step) {
+			for _, u := range st.Uses {
+				if u.FromStepID == producerID {
+					return
+				}
+			}
+			st.Uses = append(st.Uses, model.Use{FromStepID: producerID, What: what})
+		})
+	}
 }
 
 func (e *Engine) linksFor(ctx context.Context, r *Run, toolKey string, c recognize.Call) []model.Use {

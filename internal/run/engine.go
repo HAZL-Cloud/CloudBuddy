@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -43,6 +44,9 @@ type Engine struct {
 	workMu    sync.Mutex
 	workLk    map[string]*sync.RWMutex // held while kind-B code runs in a folder (D-029)
 	heldLocks map[string]*sync.RWMutex // release token hash -> held folder lock
+
+	pinOnce sync.Once
+	pinned  map[string]string
 
 	// ClaudeCanary is true once Phase 2 confirmed SessionStart fires in -p
 	// mode; only then is a missing canary treated as a bypass.
@@ -88,7 +92,15 @@ func (e *Engine) Recover(ctx context.Context) error {
 }
 
 func (e *Engine) env(workdir string) recognize.Env {
-	return recognize.Env{Home: e.cfg.Home, DataDir: e.cfg.DataDir, Port: e.cfg.Port, Workdir: workdir, CloudBuddyBin: e.cfg.Bin}
+	e.pinOnce.Do(func() {
+		e.pinned = map[string]string{}
+		for _, bin := range recognize.CloudCLINames() {
+			if p, err := exec.LookPath(bin); err == nil {
+				e.pinned[bin] = p
+			}
+		}
+	})
+	return recognize.Env{Home: e.cfg.Home, DataDir: e.cfg.DataDir, Port: e.cfg.Port, Workdir: workdir, CloudBuddyBin: e.cfg.Bin, Pinned: e.pinned}
 }
 
 // ---------- conversations ----------

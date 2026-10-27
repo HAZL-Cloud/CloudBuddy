@@ -27,6 +27,9 @@ type MCPServer struct {
 // Claude Code's ~/.claude.json and Codex's ~/.codex/config.toml.
 func (e *Engine) userMCPServers() map[string]MCPServer {
 	out := map[string]MCPServer{}
+	if os.Getenv("CB_NO_USER_MCP") == "1" { // tests: never start the user's real servers
+		goto extra
+	}
 	if b, err := os.ReadFile(filepath.Join(e.cfg.Home, ".claude.json")); err == nil {
 		var cfg struct {
 			MCPServers map[string]struct {
@@ -60,6 +63,7 @@ func (e *Engine) userMCPServers() map[string]MCPServer {
 			}
 		}
 	}
+extra:
 	if extra := os.Getenv("CB_EXTRA_MCP"); extra != "" { // tests: {"name": {command,args,env}}
 		var m map[string]MCPServer
 		if json.Unmarshal([]byte(extra), &m) == nil {

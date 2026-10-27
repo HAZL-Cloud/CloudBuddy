@@ -1,0 +1,23 @@
+/* Reset, shared bits, and the three-panel grid. */
+*,*::before,*::after{box-sizing:border-box}
+html,body,#root{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.45;overflow:hidden;-webkit-font-smoothing:antialiased}
+button,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mono{font-family:var(--f-mono)}
+.ic{width:16px;height:16px;flex:none}
+.ic.sm{width:13px;height:13px}
+code{font:500 .88em var(--f-mono);background:var(--line-soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+
+/* Action colors, applied by class on rows, cards, chips and ticks */
+.risk-read{--risk:var(--read);--risk-soft:var(--read-soft)}
+.risk-create{--risk:var(--create);--risk-soft:var(--create-soft)}
+.risk-change{--risk:var(--change);--risk-soft:var(--change-soft)}
+.risk-send{--risk:var(--send);--risk-soft:var(--send-soft)}
+.risk-delete{--risk:var(--delete);--risk-soft:var(--delete-soft)}
+.risk-unknown{--risk:var(--change);--risk-soft:var(--change-soft)}
+.risk-result{--risk:var(--accent);--risk-soft:var(--accent-soft)}
+
+.app{height:100%;display:grid;grid-template-columns:244px minmax(320px,384px) minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+.mobile-switch{display:none}
+.scrim{position:fixed;inset:0;background:var(--scrim);z-index:45}

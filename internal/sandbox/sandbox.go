@@ -28,7 +28,15 @@ type Paths struct {
 	Home    string
 	Bin     string
 	Port    int
+	Workdir string // the only project folder the command may write
 }
+
+// cliStateDirs are folders cloud CLIs and package managers write their own
+// caches and logins to (S6).
+var cliStateDirs = []string{".aws", ".config", ".cache", ".npm", ".pnpm-store", ".yarn", ".wrangler", ".terraform.d",
+	".pulumi", ".cdk", ".kube", ".docker", ".azure", ".fly", ".netlify", ".vercel", ".supabase", ".stripe",
+	"Library/Caches", "Library/Preferences/.wrangler", "Library/Application Support/com.vercel.cli",
+	"Library/Application Support/stripe", ".local/share", ".local/state", "go/pkg/mod"}
 
 func quote(p string) string {
 	return `"` + strings.ReplaceAll(strings.ReplaceAll(p, `\`, `\\`), `"`, `\"`) + `"`
@@ -45,6 +53,16 @@ func real(p string) string {
 func MacProfile(p Paths) string {
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n")
+	// Writes: only the project folder, temp folders and CLI state folders.
+	// Later rules win, so the protected paths below are denied last.
+	b.WriteString("(deny file-write*)\n(allow file-write* (subpath \"/dev\") (subpath \"/private/tmp\") (subpath \"/private/var/folders\") (subpath \"/tmp\")")
+	if p.Workdir != "" {
+		fmt.Fprintf(&b, " (subpath %s)", quote(real(p.Workdir)))
+	}
+	for _, d := range cliStateDirs {
+		fmt.Fprintf(&b, " (subpath %s)", quote(filepath.Join(p.Home, d)))
+	}
+	b.WriteString(")\n")
 	// CloudBuddy's data: no reading or writing
 	fmt.Fprintf(&b, "(deny file-read* file-write* (subpath %s))\n", quote(real(p.DataDir)))
 	// the agents' settings and logins: no writing; the logins: no reading

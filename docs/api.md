@@ -30,6 +30,8 @@ interface Approval {
   lossTitle?: string;          // e.g. "What will be lost" / "What will happen"
   loss?: string[];
   warning?: string;            // kind-B warning ("CloudBuddy can't see what this does inside…")
+  yesLabel?: string;           // button text, e.g. "Delete", "Send", "Run it" (default "Approve")
+  noLabel?: string;            // e.g. "Keep it", "Not yet" (default "Deny")
   requestedAt: string;
   decidedAt?: string;
 }
@@ -40,6 +42,7 @@ interface Step {
   kind: "cloud" | "local";     // only "cloud" steps go on the canvas
   provider: string;            // "AWS", "Stripe", "Local", "Unknown", …
   product: string;             // "S3", "Prices", "Shell", …
+  productSub?: string;         // short sub-label for single-provider lanes ("Storage")
   action: Action;
   tags: Tag[];
   title: string;

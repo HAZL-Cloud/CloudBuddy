@@ -26,6 +26,9 @@ type HookAnswer struct {
 	UpdatedInput map[string]any `json:"updatedInput,omitempty"`
 }
 
+var knownBashKeys = map[string]bool{"command": true, "description": true, "timeout": true,
+	"run_in_background": true, "dangerouslyDisableSandbox": true, "allowed_domains": true}
+
 var fileTools = map[string]string{"Read": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "Write": "file_path",
 	"NotebookEdit": "notebook_path", "NotebookRead": "notebook_path", "Glob": "path", "Grep": "path"}
 
@@ -39,6 +42,13 @@ func CallFromClaude(in HookInput) recognize.Call {
 		c.Command = str("command")
 		c.Description = str("description")
 		c.WantsNetwork, _ = in.ToolInput["dangerouslyDisableSandbox"].(bool)
+		// allowed_domains opens network from inside Claude Code's sandbox, so
+		// it counts as asking for network (found in the Phase 2 live run).
+		if d, ok := in.ToolInput["allowed_domains"]; ok && d != nil {
+			if list, isList := d.([]any); !isList || len(list) > 0 {
+				c.WantsNetwork = true
+			}
+		}
 		c.Background, _ = in.ToolInput["run_in_background"].(bool)
 		c.Args = nil
 	case fileTools[in.ToolName] != "":
@@ -76,6 +86,15 @@ func (e *Engine) ClaudePreTool(ctx context.Context, runID string, in HookInput) 
 	if call.Cwd == "" {
 		call.Cwd = r.Workdir
 	}
+	// A Bash option CloudBuddy doesn't know might change how the sandbox
+	// treats the command: deny rather than guess (fail closed).
+	if in.ToolName == "Bash" {
+		for k := range in.ToolInput {
+			if !knownBashKeys[k] {
+				return HookAnswer{Decision: "deny", Reason: "CloudBuddy doesn't know the Bash option \"" + k + "\" yet, so it can't check this command. Run it without that option."}
+			}
+		}
+	}
 	// MCP calls through CloudBuddy's gateway are decided by the gateway.
 	if call.Via == "mcp" && r.gateways[call.Server] {
 		return HookAnswer{Decision: "allow", Reason: "CloudBuddy's MCP gateway checks this call."}
@@ -98,6 +117,7 @@ func (e *Engine) ClaudePreTool(ctx context.Context, runID string, in HookInput) 
 			upd[k] = v
 		}
 		delete(upd, "dangerouslyDisableSandbox")
+		delete(upd, "allowed_domains") // the wrapper runs outside Claude's sandbox
 		upd["command"] = fmt.Sprintf("%s exec --release %s", e.cfg.Bin, token)
 		return HookAnswer{Decision: "allow", Reason: "Approved in CloudBuddy.", UpdatedInput: upd}
 	}

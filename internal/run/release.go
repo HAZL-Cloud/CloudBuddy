@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"os"
 	"time"
 
 	"cloudbuddy/internal/config"
@@ -27,6 +28,7 @@ type ReleaseInfo struct {
 	Profile string `json:"profile"` // sandbox-exec profile (network on, protected files off)
 	Kind    string `json:"kind"`    // A | B
 	StepID  string `json:"stepId"`
+	Path    string `json:"path"` // PATH CloudBuddy was started with, so project folders can't shadow a CLI
 }
 
 var ErrStale = errors.New("this release is unknown, used, stale, or its files changed")
@@ -79,8 +81,8 @@ func (e *Engine) Release(ctx context.Context, token, cwd string) (ReleaseInfo, e
 			e.releaseHold(key)
 		}(hashToken(token))
 	}
-	return ReleaseInfo{Command: rel.Command, Cwd: rel.Cwd, Kind: rel.NetworkKind, StepID: rel.StepID,
-		Profile: sandbox.MacProfile(sandbox.Paths{DataDir: e.cfg.DataDir, Home: e.cfg.Home, Bin: e.cfg.Bin, Port: e.cfg.Port})}, nil
+	return ReleaseInfo{Command: rel.Command, Cwd: rel.Cwd, Kind: rel.NetworkKind, StepID: rel.StepID, Path: os.Getenv("PATH"),
+		Profile: sandbox.MacProfile(sandbox.Paths{DataDir: e.cfg.DataDir, Home: e.cfg.Home, Bin: e.cfg.Bin, Port: e.cfg.Port, Workdir: r.Workdir})}, nil
 }
 
 // ExecFinished is called by cloudbuddy exec when the command ends.

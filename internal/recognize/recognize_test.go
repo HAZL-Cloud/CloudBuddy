@@ -220,3 +220,18 @@ func TestFileTools(t *testing.T) {
 		t.Errorf("reading CloudBuddy data not protected")
 	}
 }
+
+func TestPinnedCLI(t *testing.T) {
+	env := testEnv
+	env.Pinned = map[string]string{"aws": "/opt/homebrew/bin/aws"}
+	for _, c := range []string{"./aws s3 ls", "/tmp/aws s3 ls", "PATH=./bin:$PATH aws s3 ls", "node_modules/.bin/aws s3 ls"} {
+		d := Recognize(Call{Via: "shell", Command: c, WantsNetwork: true, Cwd: "/work"}, env, nil)
+		if d.Network != "B" || d.ReviewedRead {
+			t.Errorf("%q: a copy of aws treated as the real one: net=%q reviewed=%v", c, d.Network, d.ReviewedRead)
+		}
+	}
+	d := Recognize(Call{Via: "shell", Command: "aws s3 ls", WantsNetwork: true, Cwd: "/work"}, env, nil)
+	if d.Network != "A" || !d.ReviewedRead {
+		t.Errorf("installed aws: net=%q reviewed=%v", d.Network, d.ReviewedRead)
+	}
+}

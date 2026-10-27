@@ -1,0 +1,121 @@
+import { setSignedOut } from './auth'
+import type {
+  ConnectionsResponse,
+  Connection,
+  ConversationDetail,
+  ConversationSummary,
+  Decision,
+  AgentName,
+  Rule,
+  Session,
+  Step,
+} from './types'
+
+export class ApiError extends Error {
+  readonly status: number
+  readonly code: string
+  constructor(status: number, code: string) {
+    super(code)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+  }
+}
+
+export class NotSignedInError extends ApiError {
+  constructor() {
+    super(401, 'not_signed_in')
+    this.name = 'NotSignedInError'
+  }
+}
+
+type Method = 'GET' | 'POST' | 'PUT'
+
+// The CSRF token lives in memory only (api.md). It is fetched once and sent on every non-GET request.
+let sessionRequest: Promise<Session> | null = null
+
+async function send(method: Method, path: string, body: unknown, csrf: string | null): Promise<unknown> {
+  // The check sits right at the import so a production build drops the mock code entirely.
+  if (import.meta.env.VITE_MOCK === '1') {
+    const { mockRequest } = await import('./mock/mockApi')
+    return mockRequest({ method, path, body, csrf })
+  }
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (csrf) headers['X-CB-CSRF'] = csrf
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  const res = await fetch(path, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    credentials: 'same-origin',
+  })
+  if (!res.ok) {
+    let code = `http_${res.status}`
+    try {
+      const data = (await res.json()) as { error?: unknown }
+      if (typeof data.error === 'string') code = data.error
+    } catch {
+      // The body was not JSON; the status code is enough.
+    }
+    throw new ApiError(res.status, code)
+  }
+  const text = await res.text()
+  return text ? (JSON.parse(text) as unknown) : undefined
+}
+
+async function call<T>(method: Method, path: string, body?: unknown, retried = false): Promise<T> {
+  try {
+    const csrf = method === 'GET' ? null : (await getSession()).csrfToken
+    return (await send(method, path, body, csrf)) as T
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) {
+      setSignedOut(true)
+      throw new NotSignedInError()
+    }
+    // A 403 on a write usually means the server restarted and issued a new token: fetch it once and retry.
+    if (err instanceof ApiError && err.status === 403 && method !== 'GET' && !retried) {
+      sessionRequest = null
+      return call<T>(method, path, body, true)
+    }
+    throw err
+  }
+}
+
+export function getSession(): Promise<Session> {
+  if (sessionRequest) return sessionRequest
+  const request = send('GET', '/api/session', undefined, null)
+    .then((data) => data as Session)
+    .catch((err: unknown) => {
+      sessionRequest = null
+      if (err instanceof ApiError && err.status === 401) {
+        setSignedOut(true)
+        throw new NotSignedInError()
+      }
+      throw err
+    })
+  sessionRequest = request
+  return request
+}
+
+const enc = encodeURIComponent
+
+export const api = {
+  session: getSession,
+  conversations: () => call<ConversationSummary[]>('GET', '/api/conversations'),
+  conversation: (id: string) => call<ConversationDetail>('GET', `/api/conversations/${enc(id)}`),
+  createConversation: (input: { agent: AgentName; workdir: string; text: string }) =>
+    call<{ id: string }>('POST', '/api/conversations', input),
+  sendMessage: (id: string, text: string) => call<void>('POST', `/api/conversations/${enc(id)}/messages`, { text }),
+  stop: (id: string) => call<void>('POST', `/api/conversations/${enc(id)}/stop`),
+  decide: (approvalId: string, decision: Decision) =>
+    call<Step>('POST', `/api/approvals/${enc(approvalId)}`, { decision }),
+  connections: () => call<ConnectionsResponse>('GET', '/api/connections'),
+  scanConnections: () => call<ConnectionsResponse>('POST', '/api/connections/scan'),
+  setRule: (id: string, rule: Rule) => call<Connection>('PUT', `/api/connections/${enc(id)}/rule`, { rule }),
+}
+
+// Tests start each case with a clean session.
+export function resetApiForTests(): void {
+  sessionRequest = null
+  setSignedOut(false)
+}

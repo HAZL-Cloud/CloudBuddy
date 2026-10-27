@@ -38,7 +38,7 @@ func Main(args []string) int {
 	}
 	cwd, _ := os.Getwd()
 	var info struct {
-		Command, Cwd, Profile, Kind, StepID string
+		Command, Cwd, Profile, Kind, StepID, Path string
 	}
 	if err := c.Post("/gate/release", map[string]string{"token": token, "cwd": cwd}, &info); err != nil {
 		fmt.Fprintln(os.Stderr, "CloudBuddy refused to run this command:", err)
@@ -47,9 +47,13 @@ func Main(args []string) int {
 	mark := config.Random(12)
 	env := []string{"CB_EXEC_MARK=" + mark}
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "CB_") {
-			env = append(env, kv)
+		if strings.HasPrefix(kv, "CB_") || (info.Path != "" && strings.HasPrefix(kv, "PATH=")) {
+			continue
 		}
+		env = append(env, kv)
+	}
+	if info.Path != "" {
+		env = append(env, "PATH="+info.Path)
 	}
 	shell := "/bin/zsh"
 	if _, err := os.Stat(shell); err != nil {

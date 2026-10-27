@@ -45,6 +45,9 @@ type Env struct {
 	Protected     []string          // extra protected paths
 	AgentEnv      map[string]string // environment the agent was started with
 	CloudBuddyBin string
+	// Pinned maps a CLI name to the path the scanner found for it. A command
+	// that runs some other copy is treated as project code (D-029).
+	Pinned map[string]string
 }
 
 type Identity struct {
@@ -289,7 +292,12 @@ func segmentDraft(s segment, c Call, env Env, adapters *Adapters) Draft {
 		}
 	}
 	if _, ok := cloudCLIs[s.Prog]; ok {
-		return genericCloud(s, env)
+		d := genericCloud(s, env)
+		if !pinnedOK(s, env) {
+			d.Network, d.Identity = "B", Identity{Resolved: false, Label: "a copy of " + s.Prog + " that isn't the installed one"}
+			d.raise(model.ActionUnknown)
+		}
+		return d
 	}
 	if httpClients[s.Prog] {
 		return httpDraft(s, env)
@@ -312,6 +320,29 @@ func segmentDraft(s segment, c Call, env Env, adapters *Adapters) Draft {
 		d.Action, d.ReviewedRead, d.Network = model.ActionUnknown, false, "B"
 	}
 	return d
+}
+
+// pinnedOK reports whether a cloud CLI segment runs the installed CLI: no
+// explicit path to some other copy, and no PATH change in the command.
+func pinnedOK(s segment, env Env) bool {
+	if _, ok := s.Env["PATH"]; ok {
+		return false
+	}
+	if !strings.Contains(s.ProgPath, "/") {
+		return true // resolved with CloudBuddy's own PATH by cloudbuddy exec
+	}
+	want, ok := env.Pinned[s.Prog]
+	if !ok {
+		return false
+	}
+	got := s.ProgPath
+	if r, err := filepath.EvalSymlinks(got); err == nil {
+		got = r
+	}
+	if r, err := filepath.EvalSymlinks(want); err == nil {
+		want = r
+	}
+	return got == want
 }
 
 // mergeCautious folds the generic layer's view into an adapter's (D-026).
@@ -1093,3 +1124,13 @@ func dedupe(s []string) []string {
 
 // ProviderForMCP names the provider behind an MCP server name.
 func ProviderForMCP(server string) string { return mcpProvider(server) }
+
+// CloudCLINames lists the cloud CLIs the recognizer knows.
+func CloudCLINames() []string {
+	var out []string
+	for k := range cloudCLIs {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}

@@ -80,7 +80,9 @@ func (e *Engine) gate(ctx context.Context, r *Run, toolKey string, call recogniz
 
 	switch dec.Verdict {
 	case policy.Allow:
-		_ = e.st.AddStepToChat(ctx, r.ConvID, st.ID)
+		if !internalTool(call) {
+			_ = e.st.AddStepToChat(ctx, r.ConvID, st.ID)
+		}
 		e.bus.Conversation(r.ConvID)
 		return outcome{Allowed: true, Draft: draft, Step: st}
 	case policy.Deny:
@@ -346,4 +348,10 @@ func writeJSONFile(path string, v any) error {
 		return err
 	}
 	return os.WriteFile(path, b, 0o600)
+}
+
+// internalTool marks agent bookkeeping (loading tool schemas, to-do lists)
+// that would only clutter the chat.
+func internalTool(c recognize.Call) bool {
+	return c.Via == "tool" && (c.Tool == "ToolSearch" || c.Tool == "TodoWrite")
 }

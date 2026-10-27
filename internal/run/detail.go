@@ -2,6 +2,8 @@ package run
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"cloudbuddy/internal/model"
 	"cloudbuddy/internal/recognize"
@@ -26,6 +28,9 @@ func (e *Engine) Detail(ctx context.Context, id string) (model.ConversationDetai
 			Workdir: c.Workdir, Status: c.Status, UpdatedAt: c.UpdatedAt},
 		Subtitle: c.Subtitle, Chat: chat, Steps: steps, Result: c.Result,
 	}
+	for i := range steps {
+		decorate(&steps[i])
+	}
 	for _, s := range steps {
 		if s.Kind == "cloud" {
 			d.StepCount++
@@ -34,10 +39,54 @@ func (e *Engine) Detail(ctx context.Context, id string) (model.ConversationDetai
 			d.WaitingCount++
 		}
 	}
-	if d.Subtitle == "" {
-		d.Subtitle = "No cloud steps yet"
-	}
+	d.Subtitle = subtitleFor(steps)
 	return d, nil
+}
+
+// subtitleFor names the providers a conversation touched so far.
+func subtitleFor(steps []model.Step) string {
+	var providers []string
+	seen := map[string]bool{}
+	for _, s := range steps {
+		if s.Kind == "cloud" && !seen[s.Provider] {
+			seen[s.Provider] = true
+			providers = append(providers, s.Provider)
+		}
+	}
+	switch len(providers) {
+	case 0:
+		return "No cloud steps yet"
+	case 1:
+		return providers[0]
+	}
+	return fmt.Sprintf("%d providers · %s", len(providers), strings.Join(providers, ", "))
+}
+
+var productSubs = map[string]string{"S3": "Storage", "EC2": "Servers", "Account": "STS", "CloudFront": "CDN",
+	"CloudWatch": "Monitoring", "CloudWatch Logs": "Logs", "SNS": "Alerts", "SQS": "Queues", "IAM": "Access",
+	"Lambda": "Functions", "RDS": "Databases", "DynamoDB": "Database", "Route 53": "DNS", "ECS": "Containers",
+	"EKS": "Kubernetes", "ECR": "Images", "Secrets Manager": "Secrets", "CloudFormation": "Stacks", "SES": "Email",
+	"KMS": "Keys", "ACM": "Certificates", "API Gateway": "APIs", "Budgets": "Billing", "Systems Manager": "Config"}
+
+// decorate adds display-only fields the browser needs.
+func decorate(s *model.Step) {
+	if s.ProductSub == "" {
+		s.ProductSub = productSubs[s.Product]
+	}
+	a := s.Approval
+	if a == nil {
+		return
+	}
+	switch {
+	case a.Warning != "":
+		a.YesLabel, a.NoLabel = "Run it", "Don't run"
+	case s.Action == model.ActionDelete:
+		a.YesLabel, a.NoLabel = "Delete", "Keep it"
+	case s.Action == model.ActionSend:
+		a.YesLabel, a.NoLabel = "Send", "Not yet"
+	default:
+		a.YesLabel, a.NoLabel = "Approve", "Deny"
+	}
 }
 
 // fakeGate lets the fake agent ask the gate exactly as a Claude hook would.

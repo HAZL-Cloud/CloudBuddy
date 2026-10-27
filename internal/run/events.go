@@ -124,10 +124,10 @@ func (e *Engine) toolEnd(ctx context.Context, r *Run, ev agent.Event) {
 		}
 		if r.Agent == "codex" {
 			r.mu.Lock()
-			esc := r.escalated[ev.ToolKey]
+			esc, gated := r.escalated[ev.ToolKey], r.gated[ev.ToolKey]
 			r.mu.Unlock()
-			if !esc {
-				s.Kind = "local"
+			if !esc && !gated {
+				s.Kind = "local" // it ran in Codex's no-network sandbox
 			}
 		}
 	})

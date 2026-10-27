@@ -73,6 +73,8 @@ type Approval struct {
 	LossTitle   string     `json:"lossTitle,omitempty"`
 	Loss        []string   `json:"loss,omitempty"`
 	Warning     string     `json:"warning,omitempty"`
+	YesLabel    string     `json:"yesLabel,omitempty"` // e.g. "Delete bucket"
+	NoLabel     string     `json:"noLabel,omitempty"`  // e.g. "Keep it"
 	RequestedAt time.Time  `json:"requestedAt"`
 	DecidedAt   *time.Time `json:"decidedAt,omitempty"`
 }
@@ -88,6 +90,7 @@ type Step struct {
 	Kind            string      `json:"kind"` // cloud | local
 	Provider        string      `json:"provider"`
 	Product         string      `json:"product"`
+	ProductSub      string      `json:"productSub,omitempty"` // short sub-label for single-provider lanes
 	Action          Action      `json:"action"`
 	Tags            []Tag       `json:"tags"`
 	Title           string      `json:"title"`
