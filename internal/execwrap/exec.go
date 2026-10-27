@@ -60,10 +60,17 @@ func Main(args []string) int {
 		shell = "/bin/sh"
 	}
 	var cmd *exec.Cmd
+	// zsh -f reads no startup files, so nothing can redefine a CLI as a shell
+	// function or alias before the approved command runs. Plain sh reads
+	// none in non-interactive mode either.
+	shArgs := []string{"-c", info.Command}
+	if shell == "/bin/zsh" {
+		shArgs = []string{"-f", "-c", info.Command}
+	}
 	if runtime.GOOS == "darwin" && info.Profile != "" {
-		cmd = exec.Command("/usr/bin/sandbox-exec", "-p", info.Profile, shell, "-c", info.Command)
+		cmd = exec.Command("/usr/bin/sandbox-exec", append([]string{"-p", info.Profile, shell}, shArgs...)...)
 	} else {
-		cmd = exec.Command(shell, "-c", info.Command)
+		cmd = exec.Command(shell, shArgs...)
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.Env = env

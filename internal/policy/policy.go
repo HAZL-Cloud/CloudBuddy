@@ -115,6 +115,11 @@ func Decide(d recognize.Draft, ctx Context) Decision {
 	if rule == model.RuleEvery && !isRead {
 		return withLoss(Decision{Verdict: Ask, Row: 11, Reason: "Your rule for " + d.Provider + " asks before every change."}, d)
 	}
+	// Files from outside the project folder in a command with network: they
+	// could be sent anywhere (Phase 2 review).
+	if len(d.ExternalFiles) > 0 {
+		return withLoss(Decision{Verdict: Ask, Row: 12, Reason: "It uses files outside the project folder: " + strings.Join(d.ExternalFiles, ", ") + "."}, d)
+	}
 	// 12. Unknown, or only the generic layer recognized it and it isn't a reviewed read.
 	if d.Action == model.ActionUnknown || d.Opaque || (d.Generic && !isRead && onlyGeneric(d)) {
 		why := "CloudBuddy can't tell what this does."

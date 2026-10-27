@@ -25,10 +25,14 @@ type MCPServer struct {
 
 // userMCPServers reads the stdio MCP servers the user set up for the agent:
 // Claude Code's ~/.claude.json and Codex's ~/.codex/config.toml.
-func (e *Engine) userMCPServers() map[string]MCPServer {
+func (e *Engine) userMCPServers(agentName string) map[string]MCPServer {
 	out := map[string]MCPServer{}
 	if os.Getenv("CB_NO_USER_MCP") == "1" { // tests: never start the user's real servers
 		goto extra
+	}
+	// each agent only gets the servers from its own config
+	if agentName != "claude" {
+		goto codex
 	}
 	if b, err := os.ReadFile(filepath.Join(e.cfg.Home, ".claude.json")); err == nil {
 		var cfg struct {
@@ -46,6 +50,10 @@ func (e *Engine) userMCPServers() map[string]MCPServer {
 				}
 			}
 		}
+	}
+codex:
+	if agentName != "codex" {
+		goto extra
 	}
 	if b, err := os.ReadFile(filepath.Join(e.cfg.Home, ".codex", "config.toml")); err == nil {
 		var cfg struct {

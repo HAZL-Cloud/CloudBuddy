@@ -75,9 +75,12 @@ type Draft struct {
 	// Network is "" when the call stays inside the no-network sandbox, "A" for
 	// a plain cloud CLI, HTTP client or MCP call, "B" when it runs project or
 	// third-party code with network (D-029).
-	Network             string
-	Background          bool
-	Opaque              bool
+	Network    string
+	Background bool
+	Opaque     bool
+	// ExternalFiles are local files outside the project folder that a network
+	// command would read or send (Phase 2 review: exfiltration).
+	ExternalFiles       []string
 	Protected           []string
 	OutsideWorkdirWrite bool
 	Loss                []string
@@ -212,7 +215,7 @@ func shellDraft(c Call, env Env, adapters *Adapters) Draft {
 		if s.Background {
 			d.Background = true
 		}
-		if s.Opaque {
+		if s.Opaque || sd.Opaque {
 			d.Opaque = true
 		}
 		if sd.Kind == "cloud" {
@@ -253,6 +256,21 @@ func shellDraft(c Call, env Env, adapters *Adapters) Draft {
 	if c.Background {
 		d.Background = true
 	}
+	// A command that gets network must be "pure": only installed cloud CLIs,
+	// HTTP clients and a few text tools. Anything else in it would run with
+	// network too, so the whole command counts as code (kind B). Shell tricks
+	// that change what actually runs make it opaque (Phase 2 review).
+	if c.WantsNetwork || cloudSeen {
+		for _, s := range segs {
+			if !pureSegment(s, env) {
+				d.Network = "B"
+			}
+		}
+		if shellTricks(c.Command) {
+			d.Opaque = true
+		}
+		d.ExternalFiles = externalFiles(segs, c.Cwd, env)
+	}
 	if c.WantsNetwork && d.Network == "" {
 		d.Network = "B" // an unknown program asked for network
 	}
@@ -280,6 +298,105 @@ func shellDraft(c Call, env Env, adapters *Adapters) Draft {
 	return d
 }
 
+// safeTools only shape text or touch files inside the folders the wrapper
+// may write; they may share a command with a cloud CLI.
+var safeTools = map[string]bool{"cd": true, "pwd": true, "echo": true, "printf": true, "true": true, "false": true,
+	"test": true, "[": true, "sleep": true, "date": true, "jq": true, "yq": true, "grep": true, "egrep": true,
+	"fgrep": true, "head": true, "tail": true, "wc": true, "sort": true, "uniq": true, "cut": true, "tr": true,
+	"column": true, "sed": true, "mkdir": true, "touch": true, "ls": true, "cat": true, "base64": true, "tee": true,
+	"which": true, "basename": true, "dirname": true, "realpath": true, "diff": true, "stat": true, "du": true}
+
+// shellBuiltins change what later words mean (functions, aliases, exports,
+// control flow): a command using them with network is opaque.
+var shellBuiltins = map[string]bool{"function": true, "alias": true, "unalias": true, "export": true,
+	"declare": true, "typeset": true, "local": true, "readonly": true, "set": true, "unset": true, "eval": true,
+	"source": true, ".": true, "if": true, "then": true, "else": true, "elif": true, "fi": true, "for": true,
+	"while": true, "until": true, "do": true, "done": true, "case": true, "esac": true, "select": true,
+	"{": true, "}": true, "trap": true, "hash": true, "enable": true, "autoload": true, "zmodload": true, "setopt": true}
+
+func pureSegment(s segment, env Env) bool {
+	if s.Prog == "" {
+		return true
+	}
+	if s.Opaque || shellBuiltins[s.Prog] || strings.HasSuffix(s.Prog, "()") || strings.Contains(s.Prog, "(") {
+		return false
+	}
+	if _, ok := cloudCLIs[s.Prog]; ok {
+		return pinnedOK(s, env)
+	}
+	if httpClients[s.Prog] || safeTools[s.Prog] {
+		return !strings.Contains(s.ProgPath, "/") || pinnedOK(s, env)
+	}
+	return false
+}
+
+// externalFiles lists paths in a network command that point outside the
+// project and temp folders.
+func externalFiles(segs []segment, cwd string, env Env) []string {
+	var out []string
+	roots := []string{env.Workdir, cwd, "/tmp", "/private/tmp", "/var/folders", "/private/var/folders", "/dev/null", "/dev/stdin", "/dev/stdout"}
+	for _, s := range segs {
+		for _, a := range s.Args {
+			for _, cand := range pathCandidates(a) {
+				p := cand
+				if strings.HasPrefix(p, "~/") && env.Home != "" {
+					p = filepath.Join(env.Home, p[2:])
+				}
+				if strings.HasPrefix(p, "$HOME/") && env.Home != "" {
+					p = filepath.Join(env.Home, p[6:])
+				}
+				if !filepath.IsAbs(p) {
+					continue // relative paths stay in the project folder unless they climb out
+				}
+				if insideAny(resolve(p, cwd), roots) {
+					continue
+				}
+				out = append(out, cand)
+			}
+			if strings.Contains(a, "../") || a == ".." {
+				// climbing out of the project: resolve and check
+				p := resolve(strings.TrimPrefix(strings.TrimPrefix(a, "file://"), "@"), cwd)
+				if !insideAny(p, roots) {
+					out = append(out, a)
+				}
+			}
+		}
+	}
+	return dedupe(out)
+}
+
+// pathCandidates pulls file paths out of one argument: plain paths,
+// file:// and fileb:// URLs, @file uploads and key=@file pairs.
+func pathCandidates(a string) []string {
+	var out []string
+	try := func(v string) {
+		v = strings.TrimPrefix(strings.TrimPrefix(v, "fileb://"), "file://")
+		v = strings.TrimPrefix(v, "@")
+		if strings.HasPrefix(v, "/") || strings.HasPrefix(v, "~/") || strings.HasPrefix(v, "$HOME/") {
+			out = append(out, v)
+		}
+	}
+	try(a)
+	if i := strings.Index(a, "=@"); i >= 0 {
+		try(a[i+1:])
+	} else if i := strings.Index(a, "="); i >= 0 && !strings.Contains(a[:i], "/") {
+		try(a[i+1:])
+	}
+	return out
+}
+
+// shellTricks finds constructs where the text CloudBuddy reads isn't what
+// the shell will run: substitutions, process substitution, here-docs,
+// function definitions.
+func shellTricks(cmd string) bool {
+	for _, t := range []string{"$(", "`", "<(", ">(", "<<", "${", "()"} {
+		if strings.Contains(cmd, t) {
+			return true
+		}
+	}
+	return false
+}
+
 func segmentDraft(s segment, c Call, env Env, adapters *Adapters) Draft {
 	if s.Prog == "" {
 		return Draft{Kind: "local", Action: model.ActionRead, ReviewedRead: true}
@@ -297,7 +414,12 @@ func segmentDraft(s segment, c Call, env Env, adapters *Adapters) Draft {
 		return d
 	}
 	if httpClients[s.Prog] {
-		return httpDraft(s, env, adapters)
+		d := httpDraft(s, env, adapters)
+		if strings.Contains(s.ProgPath, "/") && !pinnedOK(s, env) {
+			d.Network, d.Identity = "B", Identity{Resolved: false, Label: "a copy of " + s.Prog + " that isn't the installed one"}
+			d.raise(model.ActionUnknown)
+		}
+		return d
 	}
 	if s.Prog == "git" {
 		return gitDraft(s, c)
@@ -718,7 +840,25 @@ func isLive(s segment) bool {
 	return false
 }
 
+// identityEnv are variables that change which account or credentials a CLI
+// uses; set inside a command, CloudBuddy can't tell the account.
+var identityEnvPrefixes = []string{"AWS_", "CLOUDSDK_", "GOOGLE_", "GCLOUD_", "KUBECONFIG", "STRIPE_", "CLOUDFLARE_",
+	"CF_", "AZURE_", "ARM_", "DIGITALOCEAN_", "FLY_", "HEROKU_", "VERCEL_", "NETLIFY_", "SUPABASE_", "GH_", "GITHUB_",
+	"XDG_CONFIG_HOME", "HOME"}
+var identitySafeEnv = map[string]bool{"AWS_PROFILE": true, "AWS_DEFAULT_PROFILE": true, "AWS_REGION": true,
+	"AWS_DEFAULT_REGION": true, "AWS_PAGER": true, "CLOUDSDK_CORE_PROJECT": true}
+
 func identityFor(s segment, env Env) Identity {
+	for k := range s.Env {
+		if identitySafeEnv[k] {
+			continue
+		}
+		for _, p := range identityEnvPrefixes {
+			if strings.HasPrefix(k, p) {
+				return Identity{Resolved: false, Label: k + " is set in the command"}
+			}
+		}
+	}
 	look := func(flags []string, envs []string) (string, bool) {
 		if v, ok := flagValue(s.Args, flags...); ok {
 			return v, true
@@ -841,6 +981,9 @@ func httpDraft(s segment, env Env, adapters *Adapters) Draft {
 	}
 	d.Action = methodAction(method)
 	d.GuessWord = strings.ToLower(method)
+	if httpTricks(s, raw) {
+		d.Opaque = true
+	}
 	// A GET to a known provider API is a reviewed read; to anywhere else it
 	// still sends data out, so it asks.
 	d.ReviewedRead = d.Action == model.ActionRead && d.Provider != "Web"
@@ -852,10 +995,11 @@ func httpDraft(s segment, env Env, adapters *Adapters) Draft {
 	if strings.Contains(strings.Join(s.Args, " "), "sk_live_") || strings.Contains(strings.Join(s.Args, " "), "livemode") {
 		d.addTag(model.TagLive)
 	}
-	for _, a := range s.Args {
-		if strings.Contains(a, "$") && (strings.Contains(strings.ToLower(a), "authorization") || strings.Contains(a, "-u")) {
-			d.Identity = Identity{Resolved: false, Label: "credentials from a variable"}
-		}
+	// Any credentials in the command (literal or from a variable): CloudBuddy
+	// can't tell whose account they are, so changes ask (row 10).
+	if hasFlag(s.Args, "-u", "--user", "--oauth2-bearer", "--aws-sigv4") || strings.Contains(strings.ToLower(strings.Join(s.Args, " ")), "authorization:") ||
+		strings.Contains(raw, "api_key=") || strings.Contains(raw, "token=") {
+		d.Identity = Identity{Resolved: false, Label: "a key given in the command"}
 	}
 	if d.Action == model.ActionDelete {
 		d.addTag(model.TagIrreversible)
@@ -869,6 +1013,54 @@ func httpDraft(s segment, env Env, adapters *Adapters) Draft {
 		return ad
 	}
 	return d
+}
+
+// httpTricks finds HTTP client options CloudBuddy doesn't model and that
+// can change what is sent: config files, several transfers, local file
+// uploads, and variables in the URL or body (Phase 2 review).
+func httpTricks(s segment, rawURL string) bool {
+	switch s.Prog {
+	case "curl":
+		if hasFlag(s.Args, "-K", "--config", "--next", "-:", "-T", "--upload-file", "--url-query", "--variable", "--expand-url", "--expand-data") {
+			return true
+		}
+	case "wget":
+		if hasFlag(s.Args, "-i", "--input-file", "-e", "--execute", "--post-file", "--body-file", "--config") {
+			return true
+		}
+	default: // httpie and friends: request items like field=@file
+		for _, a := range s.Args {
+			if strings.Contains(a, "=@") || strings.Contains(a, ":=@") || strings.HasPrefix(a, "@") {
+				return true
+			}
+		}
+	}
+	for _, k := range []string{"CURL_HOME", "WGETRC", "XDG_CONFIG_HOME", "HOME", "SSLKEYLOGFILE"} {
+		if _, ok := s.Env[k]; ok {
+			return true
+		}
+	}
+	urls := 0
+	for i, a := range s.Args {
+		if strings.Contains(a, "://") {
+			urls++
+		}
+		if strings.Contains(a, "$") && !(i > 0 && (s.Args[i-1] == "-u" || s.Args[i-1] == "--user" || s.Args[i-1] == "-H" || s.Args[i-1] == "--header")) {
+			return true // a variable in the URL or body
+		}
+		if i > 0 {
+			switch s.Args[i-1] {
+			case "-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "--json", "-F", "--form":
+				if strings.HasPrefix(a, "@") || strings.Contains(a, "=@") || strings.Contains(a, "=<") {
+					return true // sends a local file
+				}
+			}
+		}
+		if strings.HasPrefix(a, "--data-binary=@") || strings.HasPrefix(a, "--data=@") || strings.HasPrefix(a, "--json=@") {
+			return true
+		}
+	}
+	return urls > 1
 }
 
 func isMethod(s string) bool {
@@ -1137,10 +1329,14 @@ func dedupe(s []string) []string {
 // ProviderForMCP names the provider behind an MCP server name.
 func ProviderForMCP(server string) string { return mcpProvider(server) }
 
-// CloudCLINames lists the cloud CLIs the recognizer knows.
+// CloudCLINames lists the programs whose installed path is pinned: cloud
+// CLIs and HTTP clients.
 func CloudCLINames() []string {
 	var out []string
 	for k := range cloudCLIs {
+		out = append(out, k)
+	}
+	for k := range httpClients {
 		out = append(out, k)
 	}
 	sort.Strings(out)

@@ -29,14 +29,29 @@ type Paths struct {
 	Bin     string
 	Port    int
 	Workdir string // the only project folder the command may write
+	Kind    string // A: plain cloud CLI (no approval needed) | B: approved code
 }
 
-// cliStateDirs are folders cloud CLIs and package managers write their own
-// caches and logins to (S6).
-var cliStateDirs = []string{".aws", ".config", ".cache", ".npm", ".pnpm-store", ".yarn", ".wrangler", ".terraform.d",
-	".pulumi", ".cdk", ".kube", ".docker", ".azure", ".fly", ".netlify", ".vercel", ".supabase", ".stripe",
-	"Library/Caches", "Library/Preferences/.wrangler", "Library/Application Support/com.vercel.cli",
-	"Library/Application Support/stripe", ".local/share", ".local/state", "go/pkg/mod"}
+// cliStateDirs are cache and token folders cloud CLIs and package managers
+// write while they run (S6). Config files that can run code or change which
+// account is used are denied below.
+var cliStateDirs = []string{".aws/cli/cache", ".aws/sso/cache", ".config/gcloud", ".config/stripe", ".cache", ".npm",
+	".pnpm-store", ".yarn/cache", ".wrangler", ".terraform.d/plugin-cache", ".pulumi", ".cdk", ".kube/cache",
+	".azure", ".fly", ".netlify", ".vercel", ".supabase", ".stripe", "Library/Caches",
+	"Library/Preferences/.wrangler", "Library/Application Support/com.vercel.cli", "Library/Application Support/stripe",
+	".local/share/pnpm", "go/pkg/mod"}
+
+// configFiles can make a later command run code or use another account
+// (credential_process, aliases, credential helpers, rc files).
+var configFiles = []string{".aws/config", ".aws/credentials", ".config/gcloud/configurations", ".config/gh", ".gitconfig",
+	".config/git", ".npmrc", ".yarnrc", ".curlrc", ".config/.curlrc", ".wgetrc", ".netrc", ".ssh", ".docker/config.json",
+	".kube/config", ".zshrc", ".zshenv", ".zprofile", ".bashrc", ".bash_profile", ".profile", ".config/stripe/config.toml"}
+
+// secretDirs aren't needed by any cloud CLI: commands that run without the
+// user's approval (kind A) can't read them.
+var secretDirs = []string{".ssh", ".gnupg", "Library/Keychains", "Library/Application Support/Google/Chrome",
+	"Library/Application Support/Firefox", "Library/Safari", "Library/Cookies", "Library/Application Support/Arc",
+	".password-store", ".1password", "Library/Group Containers"}
 
 func quote(p string) string {
 	return `"` + strings.ReplaceAll(strings.ReplaceAll(p, `\`, `\\`), `"`, `\"`) + `"`
@@ -74,6 +89,14 @@ func MacProfile(p Paths) string {
 	}
 	if p.Bin != "" {
 		fmt.Fprintf(&b, "(deny file-write* (literal %s))\n", quote(real(p.Bin)))
+	}
+	for _, f := range configFiles {
+		fmt.Fprintf(&b, "(deny file-write* (literal %s) (subpath %s))\n", quote(filepath.Join(p.Home, f)), quote(filepath.Join(p.Home, f)))
+	}
+	if p.Kind != "B" {
+		for _, d := range secretDirs {
+			fmt.Fprintf(&b, "(deny file-read* (subpath %s))\n", quote(filepath.Join(p.Home, d)))
+		}
 	}
 	// CloudBuddy's own port
 	if p.Port != 0 {

@@ -325,9 +325,13 @@ func (e *Engine) finish(r *Run, status, text string) {
 // gatewaySpecs builds the MCP server entries the agent gets: one CloudBuddy
 // gateway per MCP server the user has set up (D-023).
 func (e *Engine) gatewaySpecs(r *Run, runDir string) map[string]agent.MCPSpec {
-	servers := e.userMCPServers()
+	servers := e.userMCPServers(r.Agent)
+	rules, _ := e.st.Rules(context.Background())
 	out := map[string]agent.MCPSpec{}
 	for name, spec := range servers {
+		if rules["mcp:"+name] == model.RuleOff {
+			continue // turned off in Connections: not started at all
+		}
 		specPath := filepath.Join(runDir, "mcp-"+safeName(name)+".json")
 		if err := writeJSONFile(specPath, spec); err != nil {
 			continue

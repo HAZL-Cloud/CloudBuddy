@@ -32,6 +32,9 @@ type outcome struct {
 	Step    model.Step
 	// ApprovalID is set when the user approved this call.
 	ApprovalID string
+	// ExecDigest is the file hash taken when the user was asked; the release
+	// must compare against it, never a fresh one (Phase 2 review).
+	ExecDigest string
 }
 
 // gate is the single decision path for every agent tool call (section 4.2).
@@ -139,7 +142,7 @@ func (e *Engine) gate(ctx context.Context, r *Run, toolKey string, call recogniz
 	st, _, _ = e.updateStepByID(bg, r, st.ID, func(s *model.Step) { s.Status = model.StatusRunning })
 	_ = e.st.AddStepToChat(bg, r.ConvID, st.ID)
 	e.bus.Conversation(r.ConvID)
-	return outcome{Allowed: true, Draft: draft, Step: st, ApprovalID: ap.ID}
+	return outcome{Allowed: true, Draft: draft, Step: st, ApprovalID: ap.ID, ExecDigest: ap.ExecDigest}
 }
 
 // Decide is the user's answer from the browser.

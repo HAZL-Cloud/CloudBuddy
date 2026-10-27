@@ -14,13 +14,21 @@ func (e *Engine) codexApproval(ctx context.Context, r *Run, method string, param
 	switch method {
 	case "item/commandExecution/requestApproval", "execCommandApproval":
 		var p struct {
-			ItemID  string `json:"itemId"`
-			CallID  string `json:"callId"`
-			Command any    `json:"command"`
-			Cwd     string `json:"cwd"`
-			Reason  string `json:"reason"`
+			ItemID  string          `json:"itemId"`
+			CallID  string          `json:"callId"`
+			Command any             `json:"command"`
+			Cwd     string          `json:"cwd"`
+			Reason  string          `json:"reason"`
+			Kind    string          `json:"kind"`
+			NetCtx  json.RawMessage `json:"networkApprovalContext"`
 		}
 		if json.Unmarshal(params, &p) != nil {
+			return decline, nil
+		}
+		// Only plain command approvals: "writeStdin" types into a running
+		// terminal, and a network-context approval can release other queued
+		// commands to the same host (Phase 2 review).
+		if (p.Kind != "" && p.Kind != "command") || (len(p.NetCtx) > 0 && string(p.NetCtx) != "null") {
 			return decline, nil
 		}
 		cmd := ""

@@ -36,7 +36,7 @@ var ErrStale = errors.New("this release is unknown, used, stale, or its files ch
 // Release is the atomic release step (D-024, D-036): it uses the token once,
 // consumes the approval once, and checks the files the command runs haven't
 // changed since the user approved it.
-func (e *Engine) Release(ctx context.Context, token, cwd string) (ReleaseInfo, error) {
+func (e *Engine) Release(ctx context.Context, token, _ string) (ReleaseInfo, error) {
 	rel, err := e.st.ConsumeRelease(ctx, hashToken(token), e.cfg.Epoch)
 	if err != nil {
 		return ReleaseInfo{}, ErrStale
@@ -52,12 +52,21 @@ func (e *Engine) Release(ctx context.Context, token, cwd string) (ReleaseInfo, e
 			return ReleaseInfo{}, ErrStale
 		}
 	}
-	if rel.ExecDigest != "" {
-		dir := rel.Cwd
-		if cwd != "" {
-			dir = cwd
-		}
-		if filesDigest(rel.Command, dir) != rel.ExecDigest {
+	if rel.NetworkKind == "B" {
+		// Reserve the folder before checking the files, and keep it until
+		// cloudbuddy exec reports the command finished (D-029).
+		lk := e.workLock(r.Workdir)
+		lk.Lock()
+		key := hashToken(token)
+		e.mu.Lock()
+		e.heldLocks[key] = lk
+		e.mu.Unlock()
+		go func() { // last resort if the wrapper never reports back
+			time.Sleep(2 * time.Hour)
+			e.releaseHold(key)
+		}()
+		if rel.ExecDigest == "" || filesDigest(rel.Command, rel.Cwd) != rel.ExecDigest {
+			e.releaseHold(key)
 			_, _, _ = e.updateStepByID(context.Background(), r, rel.StepID, func(s *model.Step) {
 				s.Status = model.StatusDenied
 				now := time.Now().UTC()
@@ -68,21 +77,8 @@ func (e *Engine) Release(ctx context.Context, token, cwd string) (ReleaseInfo, e
 			return ReleaseInfo{}, ErrStale
 		}
 	}
-	if rel.NetworkKind == "B" {
-		// hold other calls in this folder while project code runs (D-029)
-		lk := e.workLock(r.Workdir)
-		lk.Lock()
-		e.mu.Lock()
-		e.heldLocks[hashToken(token)] = lk
-		e.mu.Unlock()
-		// never hold forever: the exec wrapper reports back when done
-		go func(key string) {
-			time.Sleep(30 * time.Minute)
-			e.releaseHold(key)
-		}(hashToken(token))
-	}
 	return ReleaseInfo{Command: rel.Command, Cwd: rel.Cwd, Kind: rel.NetworkKind, StepID: rel.StepID, Path: os.Getenv("PATH"),
-		Profile: sandbox.MacProfile(sandbox.Paths{DataDir: e.cfg.DataDir, Home: e.cfg.Home, Bin: e.cfg.Bin, Port: e.cfg.Port, Workdir: r.Workdir})}, nil
+		Profile: sandbox.MacProfile(sandbox.Paths{DataDir: e.cfg.DataDir, Home: e.cfg.Home, Bin: e.cfg.Bin, Port: e.cfg.Port, Workdir: r.Workdir, Kind: rel.NetworkKind})}, nil
 }
 
 // ExecFinished is called by cloudbuddy exec when the command ends.

@@ -108,7 +108,7 @@ func (e *Engine) ClaudePreTool(ctx context.Context, runID string, in HookInput) 
 	if call.Via == "shell" && o.Draft.Network != "" {
 		token := randomToken()
 		rel := store.Release{TokenHash: hashToken(token), StepID: o.Step.ID, RunID: r.ID, LaunchEpoch: e.cfg.Epoch,
-			ApprovalID: o.ApprovalID, Command: call.Command, Cwd: call.Cwd, NetworkKind: o.Draft.Network, ExecDigest: execDigest(call, o.Draft)}
+			ApprovalID: o.ApprovalID, Command: call.Command, Cwd: call.Cwd, NetworkKind: o.Draft.Network, ExecDigest: o.ExecDigest}
 		if err := e.st.CreateRelease(ctx, rel); err != nil {
 			return HookAnswer{Decision: "deny", Reason: "CloudBuddy couldn't prepare the command: " + err.Error()}
 		}
