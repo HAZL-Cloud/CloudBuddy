@@ -1,0 +1,130 @@
+# CloudBuddy HTTP API (v0)
+
+The contract between the Go server (`internal/server`) and the React app (`web/`).
+All JSON. Times are RFC 3339 strings. IDs are strings.
+
+## Access
+
+- The server listens on `127.0.0.1:7420`.
+- On start it opens the browser at `http://127.0.0.1:7420/launch/<one-time code>`. That URL sets an HttpOnly, `SameSite=Strict` session cookie (`cb_session`) and redirects to `/`. The code works once and expires after 60 seconds.
+- `GET /api/session` (cookie required) returns `{ csrfToken, version, agents: Agent[] }`. The app keeps `csrfToken` in memory only.
+- Every non-GET request must send header `X-CB-CSRF: <csrfToken>` and a matching `Origin`.
+- Without a valid cookie every `/api` call returns `401 {"error":"not_signed_in"}`. The app then shows: "Open CloudBuddy from the link it printed in your terminal."
+- In dev, Vite runs on `127.0.0.1:5173` and proxies `/api`, `/launch` and `/stream` to `127.0.0.1:7420`. The server accepts both origins only when started with `--dev`.
+
+## Types
+
+```ts
+type AgentName = "claude" | "codex";
+interface Agent { name: AgentName; label: string; version: string; available: boolean; }
+
+type Action = "read" | "create" | "change" | "send" | "delete" | "unknown";
+type Tag = "live" | "irreversible" | "money" | "people";
+type StepStatus = "running" | "done" | "failed" | "waiting" | "denied" | "outcome_unknown";
+type ConvStatus = "idle" | "running" | "waiting" | "done" | "failed" | "interrupted";
+
+interface Approval {
+  id: string;
+  state: "pending" | "approved" | "denied" | "expired";
+  reason: string;              // "Why CloudBuddy asked", plain text
+  lossTitle?: string;          // e.g. "What will be lost" / "What will happen"
+  loss?: string[];
+  warning?: string;            // kind-B warning ("CloudBuddy can't see what this does inside…")
+  requestedAt: string;
+  decidedAt?: string;
+}
+
+interface Step {
+  id: string;
+  seq: number;                 // 1-based position in the conversation
+  kind: "cloud" | "local";     // only "cloud" steps go on the canvas
+  provider: string;            // "AWS", "Stripe", "Local", "Unknown", …
+  product: string;             // "S3", "Prices", "Shell", …
+  action: Action;
+  tags: Tag[];
+  title: string;
+  titleSource: "adapter" | "agent" | "generic";
+  resource: string;
+  facts: [string, string][];
+  via: "cli" | "mcp" | "api" | "file" | "tool";
+  recognizedBy: ("builtin" | "generated" | "mcp-hints" | "generic" | "local")[];
+  generic: boolean;            // true when no adapter matched
+  guessWord?: string;          // the word the generic layer keyed on
+  command: string;             // command line or tool call, masked
+  api: string;                 // "s3:DeleteBucket", "resend · send_broadcast", …
+  why: string;                 // the agent's own description of the step
+  status: StepStatus;
+  startedAt: string;
+  endedAt?: string;
+  durationMs?: number;
+  output: string;              // masked, capped
+  outputTruncated: boolean;
+  maskedNote?: string;         // e.g. "CloudBuddy hid a secret before saving this output."
+  uses: { fromStepId: string; what: string }[];
+  approval?: Approval;
+}
+
+type ChatItem =
+  | { id: string; type: "user"; text: string; at: string }
+  | { id: string; type: "agent"; text: string; at: string }
+  | { id: string; type: "steps"; stepIds: string[]; at: string }
+  | { id: string; type: "approval"; stepId: string; at: string }
+  | { id: string; type: "notice"; level: "info" | "warning" | "error"; text: string; at: string };
+
+interface RunResult { title: string; line: string; at: string; }
+
+interface ConversationSummary {
+  id: string; title: string; agent: AgentName; model: string; workdir: string;
+  status: ConvStatus; updatedAt: string; stepCount: number; waitingCount: number;
+}
+
+interface ConversationDetail extends ConversationSummary {
+  subtitle: string;            // e.g. "4 providers · Resend, Cloudflare, Stripe, Google Cloud"
+  chat: ChatItem[];
+  steps: Step[];
+  result?: RunResult;
+}
+
+type AdapterKind = "builtin" | "generated" | "hints" | "generic";
+type Rule = "irreversible" | "live" | "every" | "readonly" | "off";
+interface Connection {
+  id: string; kind: "cli" | "mcp"; name: string; mark: string;   // mark: 2-letter tile text
+  how: string;                 // "aws 2.34.61" or "MCP · local · 7 tools"
+  account: string; detail: string;
+  adapter: AdapterKind; adapterNote?: string;
+  rule: Rule; supported: boolean;
+}
+```
+
+## Endpoints
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/session` | | `{ csrfToken, version, agents }` |
+| GET | `/api/conversations` | | `ConversationSummary[]` (newest first) |
+| POST | `/api/conversations` | `{ agent, workdir, text }` | `{ id }` (starts the first run) |
+| GET | `/api/conversations/:id` | | `ConversationDetail` |
+| POST | `/api/conversations/:id/messages` | `{ text }` | `202` (starts a run) / `409` if a run is active |
+| POST | `/api/conversations/:id/stop` | | `202` |
+| POST | `/api/approvals/:id` | `{ decision: "approve" \| "deny" }` | `200 Step` / `409 {"error":"not_pending"}` |
+| GET | `/api/connections` | | `{ scannedAt, cli: Connection[], mcp: Connection[] }` |
+| POST | `/api/connections/scan` | | same as GET |
+| PUT | `/api/connections/:id/rule` | `{ rule }` | `Connection` |
+| GET | `/stream` | | Server-Sent Events, see below |
+
+## Live updates (`GET /stream`)
+
+Each SSE message is one JSON object in `data:`:
+
+```ts
+type StreamEvent =
+  | { type: "conversation"; conversationId: string }   // refetch that conversation + the list
+  | { type: "conversations" }                           // refetch the list
+  | { type: "connections" };                            // refetch connections
+```
+
+The app treats every event as "refetch this" (TanStack Query invalidation). The server sends a comment ping every 15 seconds.
+
+## Rendering rules
+- All text from agents and tools is rendered as **plain text**. No `dangerouslySetInnerHTML`, no Markdown-to-HTML on tool output. Agent chat text may render inline code spans for text in backticks, built from React elements.
+- Approve/Deny buttons call `POST /api/approvals/:id`. A `409` means it was already decided or expired: refetch.

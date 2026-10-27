@@ -1,0 +1,1519 @@
+<title>CloudBuddy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a three-panel workbench. Saved runs on the left, the chat with the agent in the middle,
+   and a dotted-grid canvas where each step lands left to right in a lane for its provider. */
+:root{
+  --bg:#EDF0F4; --panel:#FAFBFC; --canvas:#E5E9EF; --grid:#C3CBD6; --card:#FFFFFF; --card-muted:#F5F6F8; --code-bg:#F3F5F8;
+  --ink:#141C27; --ink-2:#465365; --ink-3:#778396; --line:#D3D9E2; --line-soft:#E4E8EE; --edge:#97A3B3;
+  --accent:#2350C8; --accent-soft:#E1E8FA; --accent-ring:rgba(35,80,200,.22); --on-accent:#FFFFFF;
+  --read:#5B6A7D; --read-soft:#E5E9EF;
+  --create:#16794B; --create-soft:#D9EFE2;
+  --change:#9A5B00; --change-soft:#F7E7CB;
+  --send:#9C2F86; --send-soft:#F6DDF0;
+  --delete:#C0322A; --delete-soft:#FADFDB; --delete-ring:rgba(192,50,42,.2); --on-delete:#FFFFFF;
+  --lane:rgba(255,255,255,.5); --scrim:rgba(12,18,28,.38);
+  --shadow:0 1px 2px rgba(18,28,45,.06),0 6px 16px -8px rgba(18,28,45,.16);
+  --shadow-lift:0 2px 4px rgba(18,28,45,.08),0 16px 36px -12px rgba(18,28,45,.28);
+  --f-display:"Bricolage Grotesque","IBM Plex Sans",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F1318; --panel:#141920; --canvas:#0B0E12; --grid:#2A323D; --card:#181E26; --card-muted:#141920; --code-bg:#0F1419;
+    --ink:#E6EAF0; --ink-2:#AAB4C2; --ink-3:#768397; --line:#28303B; --line-soft:#1E252E; --edge:#4E5A6A;
+    --accent:#8CA6FF; --accent-soft:#1C2645; --accent-ring:rgba(140,166,255,.28); --on-accent:#0A1230;
+    --read:#A3AFBE; --read-soft:#222A35;
+    --create:#52C98D; --create-soft:#12301F;
+    --change:#F0AE45; --change-soft:#35270E;
+    --send:#F08AD6; --send-soft:#3A1633;
+    --delete:#FF7D70; --delete-soft:#3A1714; --delete-ring:rgba(255,125,112,.22); --on-delete:#230806;
+    --lane:rgba(255,255,255,.022); --scrim:rgba(0,0,0,.55);
+    --shadow:0 1px 2px rgba(0,0,0,.35),0 8px 18px -8px rgba(0,0,0,.5);
+    --shadow-lift:0 2px 4px rgba(0,0,0,.4),0 18px 40px -12px rgba(0,0,0,.65);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F1318; --panel:#141920; --canvas:#0B0E12; --grid:#2A323D; --card:#181E26; --card-muted:#141920; --code-bg:#0F1419;
+  --ink:#E6EAF0; --ink-2:#AAB4C2; --ink-3:#768397; --line:#28303B; --line-soft:#1E252E; --edge:#4E5A6A;
+  --accent:#8CA6FF; --accent-soft:#1C2645; --accent-ring:rgba(140,166,255,.28); --on-accent:#0A1230;
+  --read:#A3AFBE; --read-soft:#222A35;
+  --create:#52C98D; --create-soft:#12301F;
+  --change:#F0AE45; --change-soft:#35270E;
+  --send:#F08AD6; --send-soft:#3A1633;
+  --delete:#FF7D70; --delete-soft:#3A1714; --delete-ring:rgba(255,125,112,.22); --on-delete:#230806;
+  --lane:rgba(255,255,255,.022); --scrim:rgba(0,0,0,.55);
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 8px 18px -8px rgba(0,0,0,.5);
+  --shadow-lift:0 2px 4px rgba(0,0,0,.4),0 18px 40px -12px rgba(0,0,0,.65);
+  color-scheme:dark;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.45;overflow:hidden;-webkit-font-smoothing:antialiased}
+button,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mono{font-family:var(--f-mono)}
+.ic{width:16px;height:16px;flex:none}
+.ic.sm{width:13px;height:13px}
+code{font:500 .88em var(--f-mono);background:var(--line-soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+
+/* Action colors, applied by class on rows, cards, chips and ticks */
+.risk-read{--risk:var(--read);--risk-soft:var(--read-soft)}
+.risk-create{--risk:var(--create);--risk-soft:var(--create-soft)}
+.risk-change{--risk:var(--change);--risk-soft:var(--change-soft)}
+.risk-send{--risk:var(--send);--risk-soft:var(--send-soft)}
+.risk-delete{--risk:var(--delete);--risk-soft:var(--delete-soft)}
+.risk-result{--risk:var(--accent);--risk-soft:var(--accent-soft)}
+
+.app{height:100%;display:grid;grid-template-columns:244px minmax(320px,384px) minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+.mobile-switch{display:none}
+.scrim{position:fixed;inset:0;background:var(--scrim);z-index:45}
+
+/* ---------- Sidebar ---------- */
+.sidebar{display:flex;flex-direction:column;gap:16px;padding:16px 12px 14px;border-right:1px solid var(--line);background:var(--bg);min-height:0;overflow:auto}
+.brand{display:flex;align-items:center;gap:9px;padding:2px 6px}
+.brand-mark{width:28px;height:28px;border-radius:8px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;flex:none}
+.brand-mark .ic{width:18px;height:18px}
+.brand-name{font:700 19px/1 var(--f-display);letter-spacing:-.015em}
+.brand-host{margin-left:auto;font:500 10.5px var(--f-mono);color:var(--ink-3)}
+.new-chat{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--card);font-weight:500;cursor:pointer}
+.new-chat:hover{border-color:var(--ink-3)}
+.nav{display:flex;flex-direction:column;gap:1px}
+.nav-item{display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;border-radius:8px;border:0;background:none;text-align:left;color:var(--ink-2);cursor:pointer}
+.nav-item:hover{background:var(--line-soft);color:var(--ink)}
+.nav-item.on{background:var(--line-soft);color:var(--ink);font-weight:500}
+.badge{margin-left:auto;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--delete);color:var(--on-delete);font:600 11px/18px var(--f-body);text-align:center}
+.badge.quiet{background:var(--line);color:var(--ink-2)}
+.side-label{font:600 11px var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);padding:0 10px;margin-bottom:-8px}
+.recents{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.recent{width:100%;display:flex;flex-direction:column;gap:3px;padding:8px 10px;border-radius:8px;border:0;background:none;text-align:left;cursor:pointer}
+.recent:hover{background:var(--line-soft)}
+.recent.on{background:var(--card);box-shadow:inset 0 0 0 1px var(--line)}
+.recent-title{font-weight:500;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.recent-sub{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);min-width:0}
+.recent-sub span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recent-sub.wait{color:var(--delete);font-weight:500}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ink-3);flex:none}
+.dot.ok{background:var(--create)}
+.dot.wait{background:var(--delete);animation:pulse 1.6s ease-in-out infinite}
+.dot.run{background:var(--accent);animation:pulse 1.1s ease-in-out infinite}
+.runtimes{margin-top:auto;padding:12px 10px 0;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:7px;font-size:12.5px;color:var(--ink-2)}
+.runtimes .side-label{padding:0;margin:0 0 2px}
+.runtime{display:flex;align-items:center;gap:8px}
+.runtime .mono{margin-left:auto;font-size:11.5px;color:var(--ink-3)}
+.reset{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;margin-top:4px;padding:0;border:0;background:none;color:var(--ink-3);font-size:12px;cursor:pointer}
+.reset:hover{color:var(--ink)}
+
+/* ---------- Chat ---------- */
+.chat{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--panel);border-right:1px solid var(--line)}
+.chat-head{display:flex;align-items:flex-start;gap:10px;padding:14px 16px 12px;border-bottom:1px solid var(--line)}
+.chat-head-main{min-width:0}
+.chat-head h1{margin:0;font:600 16px/1.3 var(--f-display);letter-spacing:-.005em;text-wrap:balance}
+.chat-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.meta-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:6px;background:var(--line-soft);color:var(--ink-2);font-size:12px}
+.meta-chip.mono{font-size:11.5px}
+.icon-btn{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:8px;border:1px solid var(--line);background:var(--card);cursor:pointer;color:var(--ink-2);flex:none}
+.icon-btn:hover{color:var(--ink);border-color:var(--ink-3)}
+.menu-btn{display:none}
+.messages{flex:1;min-height:0;overflow:auto;padding:18px 16px 10px;display:flex;flex-direction:column;gap:14px}
+.msg-user{align-self:flex-end;max-width:88%;padding:10px 13px;border-radius:14px 14px 4px 14px;background:var(--accent-soft);color:var(--ink);line-height:1.5}
+.msg-agent{display:flex;flex-direction:column;gap:6px;line-height:1.55;min-width:0}
+.msg-agent p{margin:0}
+.agent-name{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.agent-av{width:20px;height:20px;border-radius:6px;background:var(--ink);color:var(--panel);display:grid;place-items:center;font:600 9.5px var(--f-mono)}
+.step-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}
+.step-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:9px;padding:8px 11px;border:0;border-top:1px solid var(--line-soft);background:none;text-align:left;cursor:pointer;font-size:13px}
+.step-row:first-child{border-top:0}
+.step-row:hover{background:var(--line-soft)}
+.step-row .rt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step-row.st-denied .rt{text-decoration:line-through;color:var(--ink-3)}
+.step-row .rm{font:500 11px var(--f-mono);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.rk{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;background:var(--risk-soft);color:var(--risk)}
+.rk .ic{width:12px;height:12px}
+.approval{border:1.5px solid var(--delete);border-radius:12px;background:var(--card);overflow:hidden}
+.ap-head{display:flex;align-items:center;gap:7px;padding:7px 12px;background:var(--delete);color:var(--on-delete);font:600 11.5px var(--f-body);letter-spacing:.06em;text-transform:uppercase}
+.ap-body{padding:11px 12px 12px;display:flex;flex-direction:column;gap:9px}
+.ap-title{font-weight:600}
+.ap-why{font-size:12.5px;color:var(--ink-2)}
+.ap-cmd{font:12px/1.5 var(--f-mono);color:var(--ink-2);background:var(--code-bg);padding:7px 9px;border-radius:7px;overflow-wrap:anywhere;white-space:pre-wrap}
+.ap-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.ap-actions .btn.link{margin-right:auto}
+.approval.done{border-color:var(--line)}
+.approval.done .ap-head{background:var(--line-soft);color:var(--ink-2)}
+.ap-result{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500}
+.ap-result.ok{color:var(--create)}
+.ap-result.no{color:var(--ink-2)}
+.working{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
+.composer{margin:6px 16px 16px;border:1px solid var(--line);border-radius:14px;background:var(--card);padding:10px 10px 8px 12px;display:flex;flex-direction:column;gap:6px}
+.composer:focus-within{border-color:var(--accent)}
+.composer textarea{border:0;outline:0;resize:none;background:transparent;font:14px/1.45 var(--f-body);color:var(--ink);min-height:40px;width:100%}
+.composer textarea::placeholder{color:var(--ink-3)}
+.composer-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:7px;border:1px solid var(--line);font-size:12px;color:var(--ink-2);background:var(--panel)}
+.chip.safe{color:var(--create);border-color:transparent;background:var(--create-soft);font-weight:500}
+.send{margin-left:auto;width:32px;height:32px;border-radius:9px;border:0;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;cursor:pointer}
+
+/* ---------- Canvas panel ---------- */
+.canvas-panel{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--canvas)}
+.canvas-head{display:flex;align-items:center;flex-wrap:wrap;gap:10px 14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.canvas-title{display:flex;flex-direction:column;gap:1px;min-width:0;margin-right:auto}
+.canvas-title b{font:700 16px/1.2 var(--f-display);letter-spacing:-.01em}
+.canvas-title span{font-size:12px;color:var(--ink-3)}
+.tally{display:flex;gap:6px}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px 3px 6px;border-radius:999px;background:var(--risk-soft);color:var(--risk);font:600 12px var(--f-body);font-variant-numeric:tabular-nums;white-space:nowrap}
+.pill .ic{width:12px;height:12px}
+.pill.waiting{box-shadow:inset 0 0 0 1.5px var(--delete)}
+.seg{display:inline-flex;padding:2px;border-radius:9px;background:var(--line-soft);gap:2px}
+.seg button{border:0;background:none;padding:5px 10px;border-radius:7px;font-size:12.5px;font-weight:500;color:var(--ink-2);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.seg button.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
+.zoom{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:9px;background:var(--card);overflow:hidden}
+.zoom button{border:0;background:none;height:30px;min-width:30px;padding:0 7px;cursor:pointer;color:var(--ink-2);display:grid;place-items:center}
+.zoom button:hover{background:var(--line-soft);color:var(--ink)}
+.zl{font:500 12px var(--f-mono);min-width:44px;text-align:center;color:var(--ink-2);font-variant-numeric:tabular-nums}
+
+.viewport{position:relative;flex:1;min-height:0;overflow:hidden;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;background-color:var(--canvas);background-image:radial-gradient(circle,var(--grid) 1.1px,transparent 1.4px)}
+.viewport.grabbing{cursor:grabbing}
+.world{position:absolute;left:0;top:0;transform-origin:0 0}
+.lane{position:absolute;left:0;border-bottom:1px dashed var(--line)}
+.lane.a{background:var(--lane)}
+.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+.edges .e{fill:none;stroke:var(--edge);stroke-width:1.6;transition:opacity .3s}
+.edges .e.gate{stroke:var(--delete);stroke-dasharray:5 5}
+.edges .e.flow{stroke:var(--accent);stroke-width:2}
+.edges .e.extra{stroke-dasharray:2 5;stroke-linecap:round}
+.edges .e.fut{opacity:.12}
+.edges .ah{fill:var(--edge)}
+.edges .ahg{fill:var(--delete)}
+.edges .ahf{fill:var(--accent)}
+.rail{position:absolute;left:0;top:0;width:0;height:100%;pointer-events:none;z-index:2}
+.rail-l{position:absolute;left:0;top:0;display:flex;align-items:baseline;gap:7px;padding:5px 11px 5px 16px;background:var(--panel);border:1px solid var(--line);border-left:0;border-radius:0 8px 8px 0;box-shadow:var(--shadow);white-space:nowrap;transition:opacity .2s}
+.rail-l b{font:700 13.5px/1.1 var(--f-display)}
+.rail-l span{font:600 10px var(--f-body);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.legend{position:absolute;right:16px;bottom:12px;z-index:3;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;font-size:11.5px;color:var(--ink-2);background:var(--panel);border:1px solid var(--line);padding:5px 10px;border-radius:8px;pointer-events:none}
+.lg{display:inline-flex;align-items:center;gap:6px}
+.lg i{display:inline-block;width:20px;height:0;border-top:2px solid var(--edge)}
+.lg i.flow{border-top-color:var(--accent)}
+.lg-hint{color:var(--ink-3)}
+
+/* Step cards */
+.card{position:absolute;width:244px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:12px 14px;display:flex;flex-direction:column;gap:8px;cursor:pointer;transition:opacity .3s,box-shadow .2s,border-color .2s,filter .3s}
+.card:hover{box-shadow:var(--shadow-lift)}
+.card.selected,.card.current{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring),var(--shadow-lift)}
+.card.future{opacity:.14;filter:grayscale(1)}
+.card.enter{animation:cardIn .5s cubic-bezier(.2,.7,.2,1)}
+.card-top{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-3)}
+.card-top .time{margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums}
+.risk{display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:999px;background:var(--risk-soft);color:var(--risk);font:600 10.5px var(--f-body);letter-spacing:.06em;text-transform:uppercase}
+.risk .ic{width:12px;height:12px}
+.card-title{font:600 14.5px/1.3 var(--f-body);text-wrap:balance}
+.card-res{font:12px/1.4 var(--f-mono);color:var(--ink-2);overflow-wrap:anywhere}
+.tags{display:flex;flex-wrap:wrap;gap:4px}
+.tag{display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:5px;border:1px solid var(--line);font:600 11px var(--f-body);color:var(--ink-2);white-space:nowrap}
+.tag .ic{width:12px;height:12px}
+.tag-live{background:var(--ink);border-color:var(--ink);color:var(--panel)}
+.tag-irreversible{color:var(--delete);border-color:var(--delete)}
+.tag-money{color:var(--create);border-color:var(--create)}
+.tag-people{color:var(--send);border-color:var(--send)}
+.uses{display:flex;align-items:flex-start;gap:6px;font-size:12px;color:var(--accent);line-height:1.35}
+.uses .ic{margin-top:1px}
+.generic{display:flex;align-items:flex-start;gap:6px;padding:6px 8px;border-radius:6px;background:var(--read-soft);font-size:11.5px;line-height:1.35;color:var(--ink-2)}
+.generic .ic{margin-top:1px}
+.facts{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;margin:0;font-size:12px}
+.facts dt{color:var(--ink-3)}
+.facts dd{margin:0;color:var(--ink);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.card-foot{display:flex;align-items:center;gap:10px;border-top:1px dashed var(--line);padding-top:8px;font-size:12px}
+.card-foot .api{flex:1;min-width:0;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-3);font-size:11px}
+.status{display:inline-flex;align-items:center;gap:5px;font-weight:500;white-space:nowrap}
+.status.ok{color:var(--create)}
+.status.run{color:var(--accent)}
+.status.wait{color:var(--delete)}
+.status.no{color:var(--ink-2)}
+.card.st-denied{background:var(--card-muted)}
+.card.st-denied .card-title{text-decoration:line-through;text-decoration-color:var(--ink-3);color:var(--ink-2)}
+.card.gate.st-waiting{border:1.5px solid var(--delete);animation:gatePulse 2.2s ease-in-out infinite}
+.gate-banner{display:flex;align-items:center;gap:6px;margin:-12px -14px 0;padding:8px 14px;background:var(--delete);color:var(--on-delete);font:600 12px var(--f-body);border-radius:8px 8px 0 0}
+.loss{border-radius:8px;background:var(--delete-soft);padding:8px 10px}
+.loss-h{font:600 10.5px var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--delete);margin-bottom:4px}
+.loss ul{margin:0;padding-left:16px;font-size:12.5px;line-height:1.4;display:flex;flex-direction:column;gap:2px}
+.why{font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+.why span{display:block;font:600 10.5px var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);margin-bottom:2px}
+.gate-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stamp{align-self:flex-start;display:inline-flex;align-items:center;gap:5px;font:600 11px var(--f-mono);letter-spacing:.02em;padding:3px 8px;border-radius:5px;border:1.5px solid currentColor;transform:rotate(-1.5deg)}
+.stamp.ok{color:var(--create)}
+.stamp.no{color:var(--ink-2)}
+.bar{height:3px;border-radius:2px;background:var(--accent-soft);overflow:hidden;position:relative}
+.bar::after{content:"";position:absolute;top:0;bottom:0;left:0;width:40%;background:var(--accent);border-radius:2px;animation:slide 1.1s ease-in-out infinite}
+.card.result{border:1.5px solid var(--accent)}
+.tallies{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.tallies div{background:var(--code-bg);border-radius:8px;padding:7px 10px;display:flex;flex-direction:column;gap:2px}
+.tallies b{font:700 22px/1 var(--f-display);font-variant-numeric:tabular-nums}
+.tallies span{font-size:11.5px;color:var(--ink-3)}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:7px 11px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:600 12.5px var(--f-body);cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--ink-3)}
+.btn.danger{background:var(--delete);border-color:var(--delete);color:var(--on-delete)}
+.btn.danger:hover{filter:brightness(1.07)}
+.btn.link{border-color:transparent;background:none;color:var(--accent);padding-inline:2px}
+.spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--accent-soft);border-top-color:var(--accent);animation:spin .8s linear infinite;flex:none}
+
+/* Inspector */
+.inspector{position:absolute;top:12px;right:12px;bottom:12px;width:min(340px,calc(100% - 24px));background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-lift);overflow:auto;padding:14px 16px 18px;z-index:4;cursor:auto;user-select:text;-webkit-user-select:text;display:flex;flex-direction:column;gap:14px}
+.ins-head{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3)}
+.ins-head .icon-btn{margin-left:auto;width:28px;height:28px}
+.ins-where{font-size:12px;color:var(--ink-3);margin-top:-8px}
+.ins-title{margin:0;font:700 18px/1.25 var(--f-display);letter-spacing:-.01em;text-wrap:balance}
+.ins-sec h4{margin:0 0 6px;font:600 10.5px var(--f-body);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ins-sec p{margin:0;color:var(--ink-2);line-height:1.5}
+.ins-sec .note{margin-top:6px;font-size:12px;color:var(--ink-3)}
+.ins-sec ul{margin:0;padding-left:18px;color:var(--ink-2);display:flex;flex-direction:column;gap:3px}
+.ins-sec .facts{font-size:12.5px}
+.ins-sec.asked{border-left:3px solid var(--delete);padding-left:10px}
+.code{margin:0;font:12px/1.55 var(--f-mono);background:var(--code-bg);color:var(--ink);border:1px solid var(--line-soft);border-radius:8px;padding:9px 10px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto}
+.copy{display:inline-flex;align-items:center;gap:4px;border:0;background:none;padding:0;color:var(--accent);font:600 11.5px var(--f-body);letter-spacing:0;text-transform:none;cursor:pointer}
+
+/* Timeline scrubber */
+.scrubber{display:flex;align-items:center;gap:12px;padding:10px 16px;border-top:1px solid var(--line);background:var(--panel)}
+.ticks{flex:1;display:flex;gap:4px;min-width:0}
+.tick{flex:1;min-width:6px;height:22px;border:0;border-radius:5px;background:var(--line-soft);cursor:pointer;padding:0}
+.tick.on{background:var(--risk)}
+.tick.on.st-denied{background:var(--ink-3);opacity:.6}
+.tick.on.st-waiting{background:repeating-linear-gradient(135deg,var(--delete) 0 4px,var(--delete-soft) 4px 8px)}
+.tick.on.st-running{animation:pulse 1.1s ease-in-out infinite}
+.tick.cur{outline:2px solid var(--ink);outline-offset:2px}
+.tick:hover{filter:brightness(1.12)}
+.scrub-label{font:500 12px var(--f-mono);color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums}
+
+/* ---------- Connections page ---------- */
+.connections{display:none;grid-column:2 / -1;grid-row:1;min-width:0;min-height:0;overflow:auto;background:var(--panel)}
+.app[data-page="connections"] .connections{display:block}
+.app[data-page="connections"] .chat,.app[data-page="connections"] .canvas-panel{display:none}
+.conn-inner{max-width:1080px;margin:0 auto;padding:28px 28px 48px;display:flex;flex-direction:column;gap:24px}
+.conn-head{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px 20px}
+.conn-head-text{flex:1;min-width:260px}
+.conn-head h2{margin:0;font:700 28px/1.1 var(--f-display);letter-spacing:-.02em}
+.conn-head p{margin:8px 0 0;color:var(--ink-2);max-width:62ch;line-height:1.5}
+.conn-meta{font:500 12px var(--f-mono);color:var(--ink-3);margin-top:8px}
+.legend-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.legend-item{padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--ink-2);line-height:1.4}
+.ad{align-self:flex-start;display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font:600 11.5px var(--f-body);white-space:nowrap}
+.ad-builtin{background:var(--accent-soft);color:var(--accent)}
+.ad-generated{background:var(--create-soft);color:var(--create)}
+.ad-hints{background:var(--change-soft);color:var(--change)}
+.ad-generic{background:var(--read-soft);color:var(--read)}
+.conn-sec{display:flex;flex-direction:column;gap:10px}
+.conn-sec h3{margin:0;font:600 15px var(--f-display);display:flex;align-items:baseline;gap:8px}
+.conn-sec h3 span{font:500 12px var(--f-body);color:var(--ink-3)}
+.conn-list{border:1px solid var(--line);border-radius:12px;background:var(--card);overflow:hidden}
+.conn-row{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(200px,.95fr);gap:14px 20px;align-items:center;padding:13px 16px;border-top:1px solid var(--line-soft);transition:opacity .2s}
+.conn-row:first-child{border-top:0}
+.conn-row.off{opacity:.55}
+.conn-svc{display:flex;align-items:center;gap:11px;min-width:0}
+.mark{width:34px;height:34px;border-radius:9px;background:var(--line-soft);color:var(--ink);display:grid;place-items:center;font:700 13px var(--f-display);flex:none}
+.conn-svc b{display:block;font-weight:600}
+.conn-svc .mono{display:block;font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere}
+.cell{display:flex;flex-direction:column;gap:3px;min-width:0;font-size:12.5px;color:var(--ink-2)}
+.cell .k{font:600 10.5px var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.cell b{font-weight:500;color:var(--ink);overflow-wrap:anywhere}
+.rule{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font-size:13px;cursor:pointer}
+.conn-foot{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border:1px dashed var(--line);border-radius:12px;color:var(--ink-2);line-height:1.5}
+.conn-foot p{margin:0}
+.conn-foot b{color:var(--ink)}
+
+.toast{position:fixed;left:50%;bottom:calc(22px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--panel);padding:9px 14px;border-radius:9px;font-size:13px;font-weight:500;box-shadow:var(--shadow-lift);z-index:60;max-width:calc(100% - 32px);animation:toastIn .25s ease-out}
+
+@keyframes pulse{50%{opacity:.35}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(260%)}}
+@keyframes cardIn{from{opacity:0;transform:translateY(10px) scale(.97)}}
+@keyframes gatePulse{0%,100%{box-shadow:0 0 0 0 var(--delete-ring),var(--shadow)}50%{box-shadow:0 0 0 8px var(--delete-ring),var(--shadow)}}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,8px)}}
+
+@media (max-width:1100px){
+  .app{grid-template-columns:minmax(300px,350px) minmax(0,1fr)}
+  .connections{grid-column:1 / -1}
+  .sidebar{position:fixed;left:0;top:0;bottom:0;width:276px;z-index:50;transform:translateX(-100%);transition:transform .25s ease;box-shadow:var(--shadow-lift);padding-top:calc(16px + env(safe-area-inset-top,0px));padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}
+  .app.nav-open .sidebar{transform:none}
+  .menu-btn{display:inline-grid}
+  .legend-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .conn-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+}
+@media (max-width:760px){
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  .mobile-switch{display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+  .mobile-switch .seg{margin-left:auto}
+  .chat,.canvas-panel,.connections{grid-row:2;grid-column:1}
+  .chat{border-right:0}
+  .app[data-page="chat"][data-view="chat"] .canvas-panel{display:none}
+  .app[data-page="chat"][data-view="canvas"] .chat{display:none}
+  .chat-head .menu-btn{display:none}
+  .tally,.lg-hint{display:none}
+  .inspector{top:auto;left:8px;right:8px;bottom:8px;width:auto;max-height:64%}
+  .scrub-label .long,.play span{display:none}
+  .conn-inner{padding:20px 16px 40px}
+  .legend-grid,.conn-row{grid-template-columns:minmax(0,1fr)}
+  .conn-row{gap:10px}
+}
+.tab-dot{width:7px;height:7px;border-radius:50%;background:var(--delete);animation:pulse 1.6s ease-in-out infinite}
+@media (hover:none){.lg-hint{display:none}}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition:none!important}
+}
+</style>
+
+<div class="app" id="app" data-view="canvas" data-page="chat">
+  <aside class="sidebar" id="sidebar" aria-label="Navigation">
+    <div class="brand">
+      <span class="brand-mark" id="brandMark"></span>
+      <span class="brand-name">CloudBuddy</span>
+      <span class="brand-host">:7420</span>
+    </div>
+    <button class="new-chat" id="newChat" type="button"><span id="newChatIcon"></span>New chat</button>
+    <nav class="nav" id="nav">
+      <button class="nav-item on" data-nav="chats" type="button"></button>
+      <button class="nav-item" data-nav="approvals" type="button"></button>
+      <button class="nav-item" data-nav="connections" type="button"></button>
+      <button class="nav-item" data-nav="settings" type="button"></button>
+    </nav>
+    <div class="side-label">Recent</div>
+    <ul class="recents" id="recents"></ul>
+    <div class="runtimes">
+      <div class="side-label">Agents on this computer</div>
+      <div class="runtime"><span class="dot ok"></span>Claude Code<span class="mono">2.1.311</span></div>
+      <div class="runtime"><span class="dot ok"></span>Codex<span class="mono">0.163.0</span></div>
+      <button class="reset" id="resetBtn" type="button"></button>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim" hidden></div>
+
+  <div class="mobile-switch">
+    <button class="icon-btn" id="menuBtn2" type="button" aria-label="Open navigation"></button>
+    <div class="seg" id="viewSeg" role="group" aria-label="Choose panel">
+      <button type="button" data-view="chat">Chat</button>
+      <button type="button" data-view="canvas" class="on">Canvas<span class="tab-dot" id="tabDot" hidden></span></button>
+    </div>
+  </div>
+
+  <section class="chat" aria-label="Chat">
+    <header class="chat-head">
+      <button class="icon-btn menu-btn" id="menuBtn" type="button" aria-label="Open navigation"></button>
+      <div class="chat-head-main">
+        <h1 id="chatTitle"></h1>
+        <div class="chat-meta" id="chatMeta"></div>
+      </div>
+    </header>
+    <div class="messages" id="messages"></div>
+    <form class="composer" id="composer">
+      <textarea id="composerInput" rows="2" aria-label="Message"></textarea>
+      <div class="composer-row">
+        <span class="chip" id="agentChip"></span>
+        <span class="chip safe" id="safeChip" title="Reads run on their own. Creates and changes show up as they happen. Anything you can't undo waits for you: deletes, moving money, reaching people, live mode."></span>
+        <button class="send" type="submit" aria-label="Send message" id="sendBtn"></button>
+      </div>
+    </form>
+  </section>
+
+  <section class="canvas-panel" aria-label="Steps canvas">
+    <header class="canvas-head">
+      <div class="canvas-title"><b>Steps</b><span id="canvasSub"></span></div>
+      <div class="tally" id="tally"></div>
+      <div class="seg" id="filterSeg" role="group" aria-label="Filter steps">
+        <button type="button" data-filter="all" class="on">All steps</button>
+        <button type="button" data-filter="changes">Changes only</button>
+      </div>
+      <div class="zoom">
+        <button type="button" id="zoomOut" aria-label="Zoom out"></button>
+        <span class="zl" id="zoomLabel">86%</span>
+        <button type="button" id="zoomIn" aria-label="Zoom in"></button>
+        <button type="button" id="fitBtn" aria-label="Fit all steps" title="Fit all steps"></button>
+      </div>
+    </header>
+    <div class="viewport" id="viewport">
+      <div class="world" id="world">
+        <div id="lanes"></div>
+        <svg class="edges" id="edges" aria-hidden="true">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" orient="auto"><path class="ah" d="M0 1 L10 5 L0 9 Z"/></marker>
+            <marker id="ahg" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" orient="auto"><path class="ahg" d="M0 1 L10 5 L0 9 Z"/></marker>
+            <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" orient="auto"><path class="ahf" d="M0 1 L10 5 L0 9 Z"/></marker>
+          </defs>
+          <g id="edgeG"></g>
+        </svg>
+        <div id="nodes"></div>
+      </div>
+      <div class="rail" id="rail"></div>
+      <aside class="inspector" id="inspector" hidden aria-label="Step details"></aside>
+      <div class="legend"><span class="lg"><i></i>Next step</span><span class="lg"><i class="flow"></i>Passes a value</span><span class="lg-hint">Drag to move · ⌘ + scroll or pinch to zoom</span></div>
+    </div>
+    <footer class="scrubber">
+      <button type="button" class="btn play" id="playBtn"></button>
+      <div class="ticks" id="ticks" role="group" aria-label="Timeline of steps"></div>
+      <div class="scrub-label" id="scrubLabel"></div>
+      <button type="button" class="btn" id="liveBtn" hidden>Latest</button>
+    </footer>
+  </section>
+
+  <section class="connections" id="connections" aria-label="Connections"></section>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+(function(){
+const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const mobileMQ = window.matchMedia('(max-width:760px)');
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+
+const ICONS = {
+  eye:'<path d="M1.5 8S3.9 3.5 8 3.5 14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="2"/>',
+  plus:'<path d="M8 3v10M3 8h10"/>',
+  minus:'<path d="M3.5 8h9"/>',
+  pencil:'<path d="M10.5 2.8l2.7 2.7L6 12.7H3.3V10Z"/>',
+  trash:'<path d="M2.8 4.5h10.4M6.3 4.5V2.8h3.4v1.7M4.3 4.5l.6 8.7h6.2l.6-8.7"/>',
+  plane:'<path d="M14 2 7.2 8.8M14 2 9.6 14l-2.4-5.2L2 6.4Z"/>',
+  check:'<path d="M3 8.5l3.2 3L13 4.8"/>',
+  x:'<path d="M4 4l8 8M12 4l-8 8"/>',
+  clock:'<circle cx="8" cy="8" r="6"/><path d="M8 4.8V8l2.2 1.4"/>',
+  hand:'<path d="M5.5 8V3.8a1 1 0 0 1 2 0V7.5M7.5 7V3a1 1 0 0 1 2 0v4M9.5 7.2V4a1 1 0 0 1 2 0v5c0 2.6-1.6 4.5-4 4.5-1.6 0-2.6-.8-3.4-2L2.8 8.9a1 1 0 0 1 1.6-1.1L5.5 9"/>',
+  play:'<path d="M5 3.3v9.4L12.4 8Z" fill="currentColor" stroke="none"/>',
+  pause:'<path d="M5.5 3.5v9M10.5 3.5v9"/>',
+  cloud:'<path d="M4.6 12.5h6.9a3 3 0 0 0 .3-6 4 4 0 0 0-7.7-.9A3.5 3.5 0 0 0 4.6 12.5Z"/>',
+  shield:'<path d="M8 1.8l5 1.9v3.9c0 3.1-2.1 5.4-5 6.6-2.9-1.2-5-3.5-5-6.6V3.7Z"/><path d="M5.8 8.1l1.6 1.5 2.9-3"/>',
+  menu:'<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>',
+  fit:'<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>',
+  folder:'<path d="M2 4.5a1 1 0 0 1 1-1h3l1.5 1.5H13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1Z"/>',
+  bot:'<rect x="2.5" y="5" width="11" height="8" rx="2"/><path d="M8 2.5V5M6 9h.01M10 9h.01"/>',
+  send:'<path d="M8 13V3.5M3.8 7.6 8 3.4l4.2 4.2"/>',
+  inbox:'<path d="M2 9.5l1.8-5.2a1 1 0 0 1 .9-.8h6.6a1 1 0 0 1 .9.8L14 9.5V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1Z"/><path d="M2 9.5h3.5l1 1.5h3l1-1.5H14"/>',
+  chat:'<path d="M3 3.5h10a.5.5 0 0 1 .5.5v6.5a.5.5 0 0 1-.5.5H7l-3 2.5V11H3a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5Z"/>',
+  plug:'<path d="M6 1.8v3M10 1.8v3M4.3 4.8h7.4v2.7a3.7 3.7 0 0 1-7.4 0ZM8 11.2v3"/>',
+  gear:'<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7 3.6 3.6"/>',
+  copy:'<rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M3 10.5V4a1.5 1.5 0 0 1 1.5-1.5H11"/>',
+  reset:'<path d="M2.8 8a5.2 5.2 0 1 0 1.6-3.8M2.8 2.8v2.6h2.6"/>',
+  bolt:'<path d="M9 1.5 3.5 9H8l-1 5.5L12.5 7H8Z"/>',
+  lock:'<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',
+  dollar:'<path d="M8 1.8v12.4M11 4.5H6.8a2 2 0 0 0 0 4h2.4a2 2 0 0 1 0 4H5"/>',
+  people:'<circle cx="6" cy="5.5" r="2.2"/><path d="M2 13c.4-2.3 2-3.6 4-3.6s3.6 1.3 4 3.6"/><circle cx="11.2" cy="6.2" r="1.7"/><path d="M11 9.6c1.6.1 2.7 1.2 3 3"/>',
+  link:'<path d="M6.5 9.5l3-3M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1A2.5 2.5 0 0 1 4.5 9l1-1"/>',
+  question:'<circle cx="8" cy="8" r="6"/><path d="M6.3 6.2a1.8 1.8 0 0 1 3.4.8c0 1.2-1.7 1.5-1.7 2.6M8 11.6h.01"/>'
+};
+const ic = (n, cls='') => `<svg class="ic ${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
+
+const RISK = {
+  read:{label:'Read', icon:'eye', plural:'reads'},
+  create:{label:'Create', icon:'plus', plural:'creates'},
+  change:{label:'Change', icon:'pencil', plural:'changes'},
+  send:{label:'Send', icon:'plane', plural:'sends'},
+  delete:{label:'Delete', icon:'trash', plural:'deletes'}
+};
+const TAG = {
+  live:{label:'Live', icon:'bolt'},
+  irreversible:{label:"Can't undo", icon:'lock'},
+  money:{label:'Moves money', icon:'dollar'},
+  people:{label:'Reaches people', icon:'people'}
+};
+/* Lanes: one per provider when a run uses several, one per product when it uses just one. */
+const PROV = {
+  AWS:{name:'AWS', via:'CLI'},
+  Resend:{name:'Resend', via:'MCP'},
+  Cloudflare:{name:'Cloudflare', via:'API'},
+  Stripe:{name:'Stripe', via:'CLI'},
+  GCP:{name:'Google Cloud', via:'CLI · no adapter'}
+};
+const SVC = {
+  Account:{name:'Account', sub:'STS'},
+  S3:{name:'S3', sub:'Storage'},
+  CloudFront:{name:'CloudFront', sub:'CDN'},
+  CloudWatch:{name:'CloudWatch', sub:'Monitoring'},
+  SNS:{name:'SNS', sub:'Alerts'},
+  EC2:{name:'EC2', sub:'Servers'}
+};
+
+/* ---------- Example data (a mockup: none of these accounts are real) ---------- */
+function newsletterConv(){
+  return {
+    id:'news', title:'Launch the paid newsletter', agent:'Claude Code', model:'Opus 5.5',
+    folder:'~/code/shipyard-newsletter', sub:'4 providers · Resend, Cloudflare, Stripe, Google Cloud',
+    when:'Today', status:'waiting', result:null, decideAt:'20:42:10',
+    steps:[
+      {id:'n1', prov:'Resend', svc:'Domains', risk:'read', via:'MCP', status:'done', time:'20:31:05', dur:'0.4s',
+        title:'Checked sending domains in Resend', res:'Domains · 1 found',
+        facts:[['shipyard.dev','Not added yet']],
+        api:'resend · list_domains', cmd:'list_domains({})',
+        why:'Emails can only go out from a domain Resend has verified.',
+        out:'{\n  "data": [\n    { "name": "mail.shipyard-old.com", "status": "verified" }\n  ]\n}'},
+      {id:'n2', prov:'Resend', svc:'Domains', risk:'create', via:'MCP', status:'done', time:'20:31:09', dur:'0.9s',
+        title:'Added shipyard.dev to Resend', res:'Domains · shipyard.dev',
+        facts:[['Region','us-east-1'],['DNS records','3 to add']],
+        api:'resend · create_domain', cmd:'create_domain({ "name": "shipyard.dev" })',
+        why:'Resend hands back the DNS records that prove you own the domain.',
+        out:'{\n  "id": "d91cfa3e-5b0c-4f7a",\n  "name": "shipyard.dev",\n  "status": "not_started",\n  "records": ["MX", "TXT (SPF)", "TXT (DKIM)"]\n}'},
+      {id:'n3', prov:'Cloudflare', svc:'DNS', risk:'create', via:'API', status:'done', time:'20:31:40', dur:'2.7s',
+        title:'Added 3 email DNS records', res:'DNS · zone shipyard.dev',
+        facts:[['Records','MX, SPF, DKIM'],['Proxy','Off (DNS only)']],
+        uses:[{from:'n2', what:'3 DNS records'}],
+        api:'POST /zones/:id/dns_records × 3',
+        cmd:'curl -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \\\n  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \\\n  --data @resend-dkim.json\n# … and 2 more records',
+        why:'Resend checks these records to confirm shipyard.dev is yours.',
+        out:'{ "success": true, "result": { "type": "TXT", "name": "resend._domainkey.shipyard.dev" } }\n… 2 more records added'},
+      {id:'n4', prov:'Resend', svc:'Domains', risk:'read', via:'MCP', status:'done', time:'20:33:02', dur:'0.3s',
+        title:'Checked shipyard.dev is verified', res:'Domains · shipyard.dev',
+        facts:[['Status','Verified'],['Waited','1 min 20 s']],
+        api:'resend · get_domain', cmd:'get_domain({ "id": "d91cfa3e-5b0c-4f7a" })',
+        why:'Sending fails until the domain is verified.',
+        out:'{\n  "name": "shipyard.dev",\n  "status": "verified"\n}'},
+      {id:'n5', prov:'Stripe', svc:'Prices', risk:'create', via:'CLI', status:'done', gate:true, approval:{d:'approve', at:'20:38:44'}, time:'20:38:44', dur:'0.8s',
+        title:'Created the $8/month plan', res:'Prices · Shipyard Weekly',
+        tags:['live','irreversible'],
+        facts:[['Price','$8.00 / month'],['Price ID','price_1QxR8sKj2LmN7pQ']],
+        lossTitle:'What will happen', loss:['Real customers can buy it right away',"The $8 amount can't be edited later, only archived"],
+        askedBecause:"It runs in live mode, and a live price's amount can't be changed after it's created.",
+        api:'stripe · prices create',
+        cmd:'stripe prices create --live \\\n  --currency usd --unit-amount 800 \\\n  -d "recurring[interval]=month" \\\n  -d "product_data[name]=Shipyard Weekly"',
+        why:'The plan your readers subscribe to.',
+        out:'{\n  "id": "price_1QxR8sKj2LmN7pQ",\n  "unit_amount": 800,\n  "recurring": { "interval": "month" },\n  "livemode": true\n}'},
+      {id:'n6', prov:'Stripe', svc:'Webhooks', risk:'create', via:'CLI', status:'done', time:'20:38:51', dur:'0.6s',
+        title:'Created a webhook for new subscribers', res:'Webhooks · newsletter-api',
+        tags:['live'],
+        facts:[['Sends','customer.subscription.created'],['To','newsletter-api on Cloud Run']],
+        api:'stripe · webhook_endpoints create',
+        cmd:'stripe webhook_endpoints create --live \\\n  --url https://newsletter-api-x7k2.a.run.app/stripe \\\n  -d "enabled_events[]=customer.subscription.created"',
+        why:'Tells the signup API when someone subscribes.',
+        out:'{\n  "id": "we_1QxR9aKj2T4uV",\n  "secret": "whsec_••••••••••••••••••••7Qa",\n  "livemode": true\n}',
+        masked:'CloudBuddy hid the webhook secret before saving this output.'},
+      {id:'n7', prov:'GCP', svc:'Cloud Run', risk:'change', via:'CLI', generic:true, guessWord:'update', status:'done', gate:true, approval:{d:'approve', at:'20:40:12'}, time:'20:40:12', dur:'21.4s',
+        title:'Gave the signup API the plan and secret', res:'Cloud Run · newsletter-api',
+        facts:[['Region','us-central1'],['New version','newsletter-api-00012']],
+        uses:[{from:'n5', what:'plan ID'},{from:'n6', what:'webhook secret'}],
+        lossTitle:'What will happen', loss:['Restarts the signup API with new settings'],
+        askedBecause:"There's no Google Cloud adapter yet, and this command isn't clearly read-only.",
+        api:'gcloud run services update',
+        cmd:'gcloud run services update newsletter-api \\\n  --region us-central1 \\\n  --update-env-vars STRIPE_PRICE_ID=price_1QxR8sKj2LmN7pQ,STRIPE_WEBHOOK_SECRET=whsec_••••7Qa',
+        why:"The signup API needs the plan ID to start checkout, and the secret to trust Stripe's messages.",
+        out:'Deploying... Done.\nService [newsletter-api] revision [newsletter-api-00012-kq4] has been deployed and is serving 100 percent of traffic.\nService URL: https://newsletter-api-x7k2.a.run.app',
+        masked:'CloudBuddy hid the webhook secret in the command before saving it.'},
+      {id:'n8', prov:'Resend', svc:'Broadcasts', risk:'create', via:'MCP', status:'done', time:'20:41:30', dur:'0.5s',
+        title:'Saved the launch email as a draft', res:'Broadcasts · bc_7e2a91f4',
+        facts:[['To','Waitlist · 1,240 people'],['Subject','Shipyard Weekly is here']],
+        api:'resend · create_broadcast',
+        cmd:'create_broadcast({\n  "audience_id": "aud_waitlist",\n  "from": "news@shipyard.dev",\n  "subject": "Shipyard Weekly is here"\n})',
+        why:'Lets you look at the email before it goes out.',
+        out:'{\n  "id": "bc_7e2a91f4",\n  "status": "draft"\n}'},
+      {id:'n9', prov:'Resend', svc:'Broadcasts', risk:'send', via:'MCP', status:'waiting', gate:true, approval:null, time:'20:41:36',
+        title:'Send the launch email to 1,240 people', res:'Broadcasts · bc_7e2a91f4',
+        tags:['people','irreversible'],
+        lossTitle:'What will happen', loss:['1,240 people on the Waitlist get this email','Sent from news@shipyard.dev',"Emails can't be unsent"],
+        noLabel:'Not yet', yesLabel:'Send to 1,240',
+        askedBecause:"It reaches real people, and an email can't be unsent.",
+        api:'resend · send_broadcast', cmd:'send_broadcast({ "id": "bc_7e2a91f4" })',
+        why:'You asked me to send the launch email once everything was set up. The domain is verified and the signup API is live.',
+        out:''}
+    ],
+    chat:[
+      {t:'user', text:'Set up the paid newsletter. Send from news@shipyard.dev with Resend, add an $8/month plan in Stripe, and connect it to the signup API on Cloud Run. Then send the launch email to everyone on the waitlist.'},
+      {t:'agent', text:"I'll start with email, since the domain has to be verified before anything can be sent."},
+      {t:'steps', ids:['n1','n2']},
+      {t:'agent', text:"Resend gave me 3 DNS records. I'll add them in Cloudflare, where `shipyard.dev` lives."},
+      {t:'steps', ids:['n3','n4']},
+      {t:'agent', text:"The domain is verified. Next is the plan in Stripe. This runs in live mode, and a live price can't be edited after it's created, so I need your OK."},
+      {t:'approval', id:'n5'},
+      {t:'steps', ids:['n5','n6']},
+      {t:'agent', text:"Now I'll give the signup API the plan ID and the webhook secret. CloudBuddy has no Google Cloud adapter yet, so it asks before this change."},
+      {t:'approval', id:'n7'},
+      {t:'steps', ids:['n7','n8']},
+      {t:'agent', text:"Everything is ready and the launch email is saved as a draft. Sending it reaches 1,240 people and can't be undone, so I need your OK."},
+      {t:'approval', id:'n9'}
+    ],
+    flow(c, s, d){
+      if (d === 'approve'){
+        s.status = 'running'; c.status = 'running';
+        c.chat.push({t:'agent', text:'Sending now.'});
+        refresh(c); toast('Approved. Sending the launch email.');
+        later(1700, () => {
+          s.status = 'done'; s.dur = '2.1s';
+          s.out = '{\n  "id": "bc_7e2a91f4",\n  "status": "sent",\n  "recipients": 1240\n}';
+          const chk = {id:'n10', prov:'Resend', svc:'Broadcasts', risk:'read', via:'MCP', status:'running', time:'20:44:02', dur:'0.8s',
+            title:'Checked delivery', res:'Broadcasts · bc_7e2a91f4',
+            facts:[['Delivered','1,236'],['Bounced','4']],
+            api:'resend · get_broadcast', cmd:'get_broadcast({ "id": "bc_7e2a91f4" })',
+            why:'Makes sure the email actually went out.',
+            out:'{\n  "status": "sent",\n  "delivered": 1236,\n  "bounced": 4\n}'};
+          c.steps.push(chk);
+          c.chat.push({t:'steps', ids:[s.id]}, {t:'agent', text:"Sent. I'll check how many were delivered."}, {t:'steps', ids:[chk.id]});
+          refresh(c); follow(c, chk.id);
+          later(1900, () => {
+            chk.status = 'done'; c.status = 'done';
+            c.result = {title:'Newsletter is live', line:'1,236 delivered · $8/month plan on sale', at:'20:44:02'};
+            c.chat.push({t:'agent', text:"Done. `news@shipyard.dev` is verified, the $8/month plan is on sale, and the launch email reached 1,236 of 1,240 people (4 bounced). Every step across all four services is on the canvas."});
+            refresh(c); follow(c, 'result');
+          });
+        });
+      } else {
+        s.status = 'denied'; s.out = '(not sent: you said no)'; c.status = 'done';
+        c.result = {title:'Newsletter is set up', line:'Launch email saved as a draft', at:c.decideAt};
+        c.chat.push({t:'agent', text:"Okay, I didn't send it. The draft is saved in Resend, so you can send it from there or ask me later."});
+        refresh(c); toast('Not sent. The draft stays in Resend.'); follow(c, 'result');
+      }
+    }
+  };
+}
+function deployConv(){
+  return {
+    id:'deploy', title:'Deploy shop site to S3 + CloudFront', agent:'Claude Code', model:'Opus 5.5',
+    folder:'~/code/shipyard-web', sub:'AWS · us-east-1 · account 4821-9365-0217', when:'Today', status:'done',
+    result:{title:'Your site is live', line:'d3k9x7f2m1q8.cloudfront.net', at:'20:15:21'},
+    steps:[
+      {id:'d1', prov:'AWS', svc:'Account', risk:'read', status:'done', time:'20:12:41', dur:'0.6s',
+        title:'Checked which AWS account is signed in', res:'arn:aws:iam::482193650217:user/cli-admin',
+        facts:[['Account','4821-9365-0217'],['Profile','default']],
+        api:'sts:GetCallerIdentity', cmd:'aws sts get-caller-identity',
+        why:'Make sure everything lands in the right account before changing anything.',
+        out:'{\n  "UserId": "AIDA••••••••••••QX4",\n  "Account": "482193650217",\n  "Arn": "arn:aws:iam::482193650217:user/cli-admin"\n}',
+        masked:'CloudBuddy masked part of an ID before saving this output.'},
+      {id:'d2', prov:'AWS', svc:'S3', risk:'read', status:'done', time:'20:12:44', dur:'0.9s',
+        title:'Listed your S3 buckets', res:'4 buckets in this account',
+        facts:[['Found','4 buckets'],['Old staging','shipyard-web-staging-old']],
+        api:'s3:ListBuckets', cmd:'aws s3api list-buckets --query "Buckets[].Name"',
+        why:'See what already exists, so the new bucket does not clash with an old name.',
+        out:'[\n  "shipyard-logs",\n  "shipyard-uploads",\n  "shipyard-web-staging-old",\n  "cdk-hnb659fds-assets-482193650217-us-east-1"\n]'},
+      {id:'d3', prov:'AWS', svc:'S3', risk:'create', status:'done', time:'20:13:02', dur:'1.2s',
+        title:'Created bucket shipyard-web-prod', res:'arn:aws:s3:::shipyard-web-prod',
+        facts:[['Region','us-east-1'],['Access','Private']],
+        api:'s3:CreateBucket', cmd:'aws s3api create-bucket --bucket shipyard-web-prod --region us-east-1',
+        why:'A new home for the built site.', out:'{\n  "Location": "/shipyard-web-prod"\n}'},
+      {id:'d4', prov:'AWS', svc:'S3', risk:'change', status:'done', time:'20:13:04', dur:'0.7s',
+        title:'Blocked public access to the bucket', res:'shipyard-web-prod',
+        facts:[['Public access','Blocked (all 4 settings)']],
+        api:'s3:PutPublicAccessBlock', cmd:'aws s3api put-public-access-block --bucket shipyard-web-prod --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true',
+        why:'Visitors will reach the site through CloudFront, so the bucket itself stays private.',
+        out:'(no output: the command succeeded)'},
+      {id:'d5', prov:'AWS', svc:'S3', risk:'create', status:'done', time:'20:13:19', dur:'6.4s',
+        title:'Uploaded the built site', res:'s3://shipyard-web-prod/',
+        facts:[['Files','42'],['Size','3.1 MB']],
+        api:'s3:PutObject × 42', cmd:'aws s3 sync ./dist s3://shipyard-web-prod',
+        why:'Copies the files in ./dist into the new bucket.',
+        out:'upload: dist/index.html to s3://shipyard-web-prod/index.html\nupload: dist/assets/app-4f9c1e.js to s3://shipyard-web-prod/assets/app-4f9c1e.js\n… 40 more files'},
+      {id:'d6', prov:'AWS', svc:'CloudFront', risk:'create', status:'done', time:'20:13:41', dur:'3.8s',
+        title:'Created a CloudFront distribution', res:'E2QW8XK4N1ZP7B',
+        facts:[['Address','d3k9x7f2m1q8.cloudfront.net'],['Reads from','shipyard-web-prod']],
+        api:'cloudfront:CreateDistribution', cmd:'aws cloudfront create-distribution --distribution-config file://cloudfront-config.json',
+        why:'Serves the site over HTTPS from locations close to your visitors.',
+        out:'{\n  "Distribution": {\n    "Id": "E2QW8XK4N1ZP7B",\n    "DomainName": "d3k9x7f2m1q8.cloudfront.net",\n    "Status": "InProgress"\n  }\n}'},
+      {id:'d7', prov:'AWS', svc:'S3', risk:'change', status:'done', time:'20:13:58', dur:'0.8s',
+        title:'Let CloudFront read the bucket', res:'shipyard-web-prod · bucket policy',
+        facts:[['Allows','s3:GetObject'],['Only for','E2QW8XK4N1ZP7B']],
+        uses:[{from:'d6', what:'distribution ID'}],
+        api:'s3:PutBucketPolicy', cmd:'aws s3api put-bucket-policy --bucket shipyard-web-prod --policy file://bucket-policy.json',
+        why:'The bucket is private, so CloudFront needs permission to read the files. Nobody else gets access.',
+        out:'(no output: the command succeeded)'},
+      {id:'d8', prov:'AWS', svc:'S3', risk:'delete', status:'done', gate:true, approval:{d:'approve', at:'20:15:02'}, time:'20:15:02', dur:'3.9s',
+        title:'Delete bucket shipyard-web-staging-old', res:'arn:aws:s3:::shipyard-web-staging-old',
+        tags:['irreversible'],
+        loss:['318 files, 1.2 GB','Last changed Jul 23, 2026 (95 days ago)',"Versioning is off, so the files can't be recovered"],
+        askedBecause:"It's a delete, and with versioning off the files can't be recovered.",
+        api:'s3:DeleteBucket', apiFull:'s3:DeleteObject × 318, then s3:DeleteBucket', cmd:'aws s3 rb s3://shipyard-web-staging-old --force',
+        why:'You asked me to clean up the old staging bucket. I checked: no CloudFront distribution or DNS record points to it.',
+        out:'delete: s3://shipyard-web-staging-old/index.html\n… 317 more files\nremove_bucket: shipyard-web-staging-old'},
+      {id:'d9', prov:'AWS', svc:'CloudFront', risk:'read', status:'done', time:'20:15:21', dur:'1.1s',
+        title:'Checked the site is live', res:'d3k9x7f2m1q8.cloudfront.net',
+        facts:[['Status','Deployed']],
+        api:'cloudfront:GetDistribution', cmd:'aws cloudfront get-distribution --id E2QW8XK4N1ZP7B --query Distribution.Status',
+        why:'Confirms the new site is answering before I call it done.', out:'"Deployed"'}
+    ],
+    chat:[
+      {t:'user', text:"Deploy the site in ./dist to AWS. Put it on S3 with CloudFront in front so it loads fast, and clean up the old staging bucket while you're at it."},
+      {t:'agent', text:"I'll check which account you're signed in to and what's already there before I change anything."},
+      {t:'steps', ids:['d1','d2']},
+      {t:'agent', text:"I found the old bucket, `shipyard-web-staging-old`. I'll set up the new site first and clean up at the end."},
+      {t:'steps', ids:['d3','d4','d5','d6','d7']},
+      {t:'agent', text:"The new site is set up. Deleting the old staging bucket removes 318 files and can't be undone, so I need your OK."},
+      {t:'approval', id:'d8'},
+      {t:'steps', ids:['d8','d9']},
+      {t:'agent', text:"Done. Your site is live at `d3k9x7f2m1q8.cloudfront.net`, and the old staging bucket is gone."}
+    ]
+  };
+}
+function alarmConv(){
+  return {
+    id:'alarm', title:'Set up a monthly billing alarm', agent:'Codex', model:'',
+    folder:'~/code/shipyard-infra', sub:'AWS · us-east-1 · account 4821-9365-0217', when:'Yesterday', status:'done',
+    result:{title:'Billing alarm is on', line:'Emails ops@shipyard.dev above $50', at:'09:31:48'},
+    steps:[
+      {id:'a1', prov:'AWS', svc:'Account', risk:'read', status:'done', time:'09:31:10', dur:'0.5s',
+        title:'Checked which AWS account is signed in', res:'arn:aws:iam::482193650217:user/cli-admin',
+        facts:[['Account','4821-9365-0217']], api:'sts:GetCallerIdentity', cmd:'aws sts get-caller-identity',
+        why:'Make sure the alarm goes in the right account.',
+        out:'{\n  "Account": "482193650217",\n  "Arn": "arn:aws:iam::482193650217:user/cli-admin"\n}'},
+      {id:'a2', prov:'AWS', svc:'CloudWatch', risk:'read', status:'done', time:'09:31:15', dur:'0.8s',
+        title:'Looked for existing billing alarms', res:'us-east-1 · names starting "billing"',
+        facts:[['Found','None']], api:'cloudwatch:DescribeAlarms', cmd:'aws cloudwatch describe-alarms --alarm-name-prefix billing --region us-east-1',
+        why:"Billing data only lives in us-east-1, and I didn't want to make a duplicate.",
+        out:'{\n  "MetricAlarms": [],\n  "CompositeAlarms": []\n}'},
+      {id:'a3', prov:'AWS', svc:'SNS', risk:'create', status:'done', time:'09:31:29', dur:'0.9s',
+        title:'Created alert topic billing-alerts', res:'arn:aws:sns:us-east-1:482193650217:billing-alerts',
+        facts:[['Region','us-east-1']], api:'sns:CreateTopic', cmd:'aws sns create-topic --name billing-alerts --region us-east-1',
+        why:'The alarm needs somewhere to send its message.',
+        out:'{\n  "TopicArn": "arn:aws:sns:us-east-1:482193650217:billing-alerts"\n}'},
+      {id:'a4', prov:'AWS', svc:'SNS', risk:'create', status:'done', time:'09:31:33', dur:'0.7s',
+        title:'Subscribed ops@shipyard.dev to the topic', res:'email · ops@shipyard.dev',
+        facts:[['Status','Waiting for email confirmation']], api:'sns:Subscribe',
+        cmd:'aws sns subscribe --topic-arn arn:aws:sns:us-east-1:482193650217:billing-alerts --protocol email --notification-endpoint ops@shipyard.dev',
+        why:'This is the address you gave me.', out:'{\n  "SubscriptionArn": "pending confirmation"\n}'},
+      {id:'a5', prov:'AWS', svc:'CloudWatch', risk:'create', status:'done', time:'09:31:48', dur:'1.1s',
+        title:'Created alarm for a bill over $50', res:'billing-over-50',
+        facts:[['Watches','EstimatedCharges (USD)'],['Fires above','$50.00'],['Checks every','6 hours']],
+        uses:[{from:'a3', what:'alert topic'}],
+        api:'cloudwatch:PutMetricAlarm',
+        cmd:'aws cloudwatch put-metric-alarm --alarm-name billing-over-50 --namespace AWS/Billing --metric-name EstimatedCharges --dimensions Name=Currency,Value=USD --statistic Maximum --period 21600 --evaluation-periods 1 --threshold 50 --comparison-operator GreaterThanThreshold --alarm-actions arn:aws:sns:us-east-1:482193650217:billing-alerts --region us-east-1',
+        why:"Sends the email the first time this month's estimated bill goes over $50.",
+        out:'(no output: the command succeeded)'}
+    ],
+    chat:[
+      {t:'user', text:'Email ops@shipyard.dev if our AWS bill goes over $50 this month.'},
+      {t:'agent', text:"I'll check the account and look for an existing billing alarm first."},
+      {t:'steps', ids:['a1','a2']},
+      {t:'agent', text:"There's no billing alarm yet. I'll create an alert topic, subscribe your address, then add the alarm."},
+      {t:'steps', ids:['a3','a4','a5']},
+      {t:'agent', text:"Done. Check ops@shipyard.dev for a confirmation email from AWS and click the link, or the alert can't reach you."}
+    ]
+  };
+}
+function ec2Conv(){
+  return {
+    id:'ec2', title:'Remove unused EC2 test servers', agent:'Claude Code', model:'Opus 5.5',
+    folder:'~/code/shipyard-infra', sub:'AWS · us-east-1 · account 4821-9365-0217', when:'Oct 22', status:'done',
+    result:{title:'Cleanup finished', line:'1 server removed · 1 kept by you', at:'14:10:02'},
+    steps:[
+      {id:'e1', prov:'AWS', svc:'EC2', risk:'read', status:'done', time:'14:06:12', dur:'1.3s',
+        title:'Found 6 test servers', res:'tag env=test',
+        facts:[['Running','2'],['Stopped','4']], api:'ec2:DescribeInstances', cmd:'aws ec2 describe-instances --filters Name=tag:env,Values=test',
+        why:'Start from the servers you tagged as test.',
+        out:'i-0a7f3c91e2b4d5f68  stopped  test-api-old\ni-0c19e7a4b2f6d8e31  stopped  test-db-2\ni-05d2b8f1a9c7e3a40  running  test-api\n… 3 more'},
+      {id:'e2', prov:'AWS', svc:'CloudWatch', risk:'read', status:'done', time:'14:06:40', dur:'2.2s',
+        title:'Checked when each server was last busy', res:'CPU use, last 30 days',
+        facts:[['Idle 30+ days','2 servers']], api:'cloudwatch:GetMetricStatistics',
+        cmd:'aws cloudwatch get-metric-statistics --namespace AWS/EC2 --metric-name CPUUtilization --dimensions Name=InstanceId,Value=i-0a7f3c91e2b4d5f68 --start-time 2026-09-22T00:00:00Z --end-time 2026-10-22T00:00:00Z --period 86400 --statistics Maximum',
+        why:'Only servers nobody has used in a month should go.',
+        out:'{\n  "Label": "CPUUtilization",\n  "Datapoints": []\n}'},
+      {id:'e3', prov:'AWS', svc:'EC2', risk:'create', status:'done', time:'14:07:55', dur:'1.6s',
+        title:"Saved a backup of test-api-old's disk", res:'snap-0e7a24c9b1d3f5a86',
+        facts:[['From disk','vol-0c41f9e2a7b3d5e10'],['Size','30 GB']], api:'ec2:CreateSnapshot',
+        cmd:'aws ec2 create-snapshot --volume-id vol-0c41f9e2a7b3d5e10 --description "Backup before deleting test-api-old"',
+        why:'A safety copy in case you need anything from it later.',
+        out:'{\n  "SnapshotId": "snap-0e7a24c9b1d3f5a86",\n  "State": "pending"\n}'},
+      {id:'e4', prov:'AWS', svc:'EC2', risk:'delete', status:'done', gate:true, approval:{d:'approve', at:'14:08:51'}, time:'14:08:51', dur:'2.0s',
+        title:'Terminate server test-api-old', res:'i-0a7f3c91e2b4d5f68', tags:['irreversible'],
+        loss:['t3.medium, stopped for 41 days','Its disk is backed up in snap-0e7a24c9b1d3f5a86'],
+        askedBecause:"It's a delete. A terminated server can't be started again.",
+        api:'ec2:TerminateInstances', cmd:'aws ec2 terminate-instances --instance-ids i-0a7f3c91e2b4d5f68',
+        why:'Unused for over a month, and its disk is backed up.',
+        out:'{\n  "TerminatingInstances": [{\n    "InstanceId": "i-0a7f3c91e2b4d5f68",\n    "CurrentState": { "Name": "shutting-down" }\n  }]\n}'},
+      {id:'e5', prov:'AWS', svc:'EC2', risk:'delete', status:'denied', gate:true, approval:{d:'deny', at:'14:09:30'}, time:'14:09:30',
+        title:'Terminate server test-db-2', res:'i-0c19e7a4b2f6d8e31', tags:['irreversible'],
+        loss:['100 GB data disk with no backup','Stopped for 33 days'],
+        askedBecause:"It's a delete, and its disk has no backup.",
+        api:'ec2:TerminateInstances', cmd:'aws ec2 terminate-instances --instance-ids i-0c19e7a4b2f6d8e31',
+        why:'Unused for over a month.', out:'(not run: you said no)'},
+      {id:'e6', prov:'AWS', svc:'EC2', risk:'delete', status:'done', gate:true, approval:{d:'approve', at:'14:10:02'}, time:'14:10:02', dur:'0.6s',
+        title:'Delete security group test-legacy', res:'sg-04b2e9d1c3a5f7e80',
+        loss:['No servers use it anymore'], askedBecause:'Deletes always ask.',
+        api:'ec2:DeleteSecurityGroup', cmd:'aws ec2 delete-security-group --group-id sg-04b2e9d1c3a5f7e80',
+        why:'Its only server was test-api-old.', out:'(no output: the command succeeded)'}
+    ],
+    chat:[
+      {t:'user', text:'Clean up our EC2 test servers. Anything nobody has used in a month can go.'},
+      {t:'agent', text:"I'll list the test servers and check how busy each one has been."},
+      {t:'steps', ids:['e1','e2']},
+      {t:'agent', text:"Two servers have been idle for over a month: `test-api-old` and `test-db-2`. I'll back up test-api-old's disk first, then ask before each delete."},
+      {t:'steps', ids:['e3']},
+      {t:'approval', id:'e4'},
+      {t:'approval', id:'e5'},
+      {t:'agent', text:"Okay, keeping `test-db-2`."},
+      {t:'approval', id:'e6'},
+      {t:'agent', text:"Done. `test-api-old` is gone and its disk is backed up. `test-db-2` is still there, and the unused security group is deleted."}
+    ]
+  };
+}
+
+const RULES = [
+  ['irreversible', "Ask before anything I can't undo"],
+  ['live', 'Always ask in live mode'],
+  ['every', 'Ask before every change'],
+  ['readonly', 'Read-only'],
+  ['off', 'Off for all chats']
+];
+const ADAPTER = {
+  builtin:{label:'Built-in adapter', note:'Hand-tuned titles and risks.'},
+  generated:{label:'Generated adapter', note:"Built from the tool's published command list or API spec."},
+  hints:{label:'MCP hints', note:'Uses the read and destroy hints the tools declare about themselves.'},
+  generic:{label:'Generic checks', note:"Guesses from the command and asks unless it's clearly read-only."}
+};
+function seedConnections(){
+  return {
+    cli:[
+      {id:'aws', mark:'AW', name:'AWS', how:'aws 2.27.50', account:'Account 4821-9365-0217', detail:'profile default · us-east-1', adapter:'builtin', adNote:'One adapter covers every AWS service.', rule:'irreversible'},
+      {id:'gcloud', mark:'GC', name:'Google Cloud', how:'gcloud 541.0.0', account:'ops@shipyard.dev', detail:'project shipyard-prod', adapter:'generic', rule:'irreversible'},
+      {id:'stripe-cli', mark:'St', name:'Stripe', how:'stripe 1.31.0', account:'Shipyard Inc', detail:'test and live keys', adapter:'builtin', adNote:'Knows live mode, refunds and payouts.', rule:'irreversible'},
+      {id:'cloudflare', mark:'Cf', name:'Cloudflare', how:'wrangler 4.45.0 · API token', account:'Shipyard', detail:'zone shipyard.dev', adapter:'builtin', rule:'irreversible'},
+      {id:'vercel', mark:'Ve', name:'Vercel', how:'vercel 48.2.0', account:'team shipyard', detail:'2 projects', adapter:'generated', adNote:'Built from its API spec.', rule:'irreversible'},
+      {id:'gh', mark:'Gh', name:'GitHub', how:'gh 2.81.0', account:'shipyard-bot', detail:'org shipyard', adapter:'generated', adNote:'Built from its command list.', rule:'readonly'}
+    ],
+    mcp:[
+      {id:'resend', mark:'Re', name:'Resend', how:'MCP · local · 7 tools', account:'Shipyard team', detail:'set up in Claude Code and Codex', adapter:'builtin', adNote:'Knows which tools send email.', rule:'irreversible'},
+      {id:'stripe-mcp', mark:'St', name:'Stripe', how:'MCP · mcp.stripe.com · 24 tools', account:'Shipyard Inc', detail:'set up in Claude Code', adapter:'builtin', rule:'live'},
+      {id:'supabase', mark:'Sb', name:'Supabase', how:'MCP · local · 19 tools', account:'project shipyard-db', detail:'set up in Claude Code', adapter:'hints', adNote:'16 of 19 tools say whether they read or destroy.', rule:'off'}
+    ]
+  };
+}
+const seed = () => [newsletterConv(), deployConv(), alarmConv(), ec2Conv()];
+let convs = seed();
+let conns = seedConnections();
+
+/* ---------- State and elements ---------- */
+const state = {conv:'news', page:'chat', filter:'all', viewIndex:null, selected:null, playing:false,
+  zoom:.86, panX:0, panY:0, pos:{}, lanes:[], worldW:0, worldH:0, dirty:false, seen:new Set()};
+const el = {
+  app:$('#app'), recents:$('#recents'), nav:$('#nav'), scrim:$('#scrim'),
+  chatTitle:$('#chatTitle'), chatMeta:$('#chatMeta'), messages:$('#messages'), composer:$('#composer'), input:$('#composerInput'), agentChip:$('#agentChip'),
+  canvasSub:$('#canvasSub'), tally:$('#tally'), filterSeg:$('#filterSeg'), zoomLabel:$('#zoomLabel'),
+  viewport:$('#viewport'), world:$('#world'), lanes:$('#lanes'), edges:$('#edges'), edgeG:$('#edgeG'), nodes:$('#nodes'), rail:$('#rail'), inspector:$('#inspector'),
+  ticks:$('#ticks'), scrubLabel:$('#scrubLabel'), playBtn:$('#playBtn'), liveBtn:$('#liveBtn'), toast:$('#toast'), tabDot:$('#tabDot'), viewSeg:$('#viewSeg'),
+  connections:$('#connections')
+};
+const CW = 244, GX = 64, X0 = 140, PAD_T = 50, PAD_B = 28, MIN_CARD = 110, ANCHOR = 22;
+const cur = () => convs.find(c => c.id === state.conv);
+const timers = [];
+const later = (ms, fn) => timers.push(setTimeout(fn, ms));
+
+/* Static icons */
+$('#brandMark').innerHTML = ic('cloud');
+$('#newChatIcon').outerHTML = ic('plus');
+const navDefs = {chats:['chat','Chats'], approvals:['inbox','Approvals'], connections:['plug','Connections'], settings:['gear','Settings']};
+el.nav.querySelectorAll('[data-nav]').forEach(b => {
+  const [i, l] = navDefs[b.dataset.nav];
+  let extra = '';
+  if (b.dataset.nav === 'approvals') extra = '<span class="badge" id="approvalBadge" hidden></span>';
+  if (b.dataset.nav === 'connections') extra = '<span class="badge quiet" id="connBadge"></span>';
+  b.innerHTML = ic(i) + `<span>${l}</span>` + extra;
+});
+$('#resetBtn').innerHTML = ic('reset','sm') + 'Reset this demo';
+$('#menuBtn').innerHTML = ic('menu'); $('#menuBtn2').innerHTML = ic('menu');
+$('#safeChip').innerHTML = ic('shield','sm') + "Asks before anything you can't undo";
+$('#sendBtn').innerHTML = ic('send');
+$('#zoomOut').innerHTML = ic('minus'); $('#zoomIn').innerHTML = ic('plus'); $('#fitBtn').innerHTML = ic('fit');
+
+/* ---------- Rendering ---------- */
+function statusHTML(s){
+  if (s.status === 'done') return `<span class="status ok">${ic('check','sm')}Done · ${s.dur}</span>`;
+  if (s.status === 'running') return `<span class="status run"><span class="spin"></span>Running…</span>`;
+  if (s.status === 'waiting') return `<span class="status wait">${ic('clock','sm')}Waiting since ${s.time}</span>`;
+  return `<span class="status no">${ic('x','sm')}Not run</span>`;
+}
+const factsHTML = facts => `<dl class="facts">${facts.map(([k,v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
+const tagsHTML = s => s.tags && s.tags.length ? `<div class="tags">${s.tags.map(t => `<span class="tag tag-${t}">${ic(TAG[t].icon)}${TAG[t].label}</span>`).join('')}</div>` : '';
+function usesHTML(c, s){
+  if (!s.uses) return '';
+  return s.uses.map(u => {
+    const n = c.steps.findIndex(x => x.id === u.from) + 1;
+    return `<div class="uses">${ic('link','sm')}<span>Uses the ${esc(u.what)} from step ${n}</span></div>`;
+  }).join('');
+}
+function stampHTML(s){
+  if (!s.approval) return '';
+  return s.approval.d === 'approve'
+    ? `<span class="stamp ok">${ic('check','sm')}Approved by you · ${s.approval.at}</span>`
+    : `<span class="stamp no">${ic('x','sm')}You said no · ${s.approval.at}</span>`;
+}
+function gateButtons(s){
+  return `<div class="gate-actions"><button type="button" class="btn" data-act="deny" data-id="${s.id}">${esc(s.noLabel || 'No')}</button><button type="button" class="btn danger" data-act="approve" data-id="${s.id}">${esc(s.yesLabel || 'Approve')}</button></div>`;
+}
+function cardHTML(c, s, idx){
+  const r = RISK[s.risk];
+  const cls = ['card', 'risk-' + s.risk, 'st-' + s.status, s.gate ? 'gate' : '', state.seen.has(s.id) ? '' : 'enter'].join(' ');
+  let h = `<div class="${cls}" data-id="${s.id}" tabindex="0" aria-label="Step ${idx+1}: ${esc(s.title)}">`;
+  if (s.gate && s.status === 'waiting') h += `<div class="gate-banner">${ic('hand','sm')}Waiting for your approval</div>`;
+  h += `<div class="card-top"><span class="risk">${ic(r.icon)}${r.label}</span><span>Step ${idx+1}</span><span class="time mono">${s.time}</span></div>`;
+  h += `<div class="card-title">${esc(s.title)}</div><div class="card-res">${esc(s.res)}</div>`;
+  h += tagsHTML(s);
+  if (s.generic) h += `<div class="generic">${ic('question','sm')}<span>No ${esc(PROV[s.prov].name)} adapter. Guessed from the word “${esc(s.guessWord)}”.</span></div>`;
+  h += usesHTML(c, s);
+  if (s.facts && s.facts.length) h += factsHTML(s.facts);
+  if (s.gate && s.status === 'waiting'){
+    h += `<div class="loss"><div class="loss-h">${esc(s.lossTitle || 'What will be lost')}</div><ul>${s.loss.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>`;
+    h += `<div class="why"><span>Agent's reason</span>${esc(s.why)}</div>`;
+    h += gateButtons(s);
+  } else if (s.approval){
+    h += stampHTML(s);
+  }
+  if (s.status === 'running') h += '<div class="bar"></div>';
+  h += `<div class="card-foot">${statusHTML(s)}<span class="api mono" title="${esc(s.api)}">${esc(s.api)}</span></div></div>`;
+  return h;
+}
+function counts(c){
+  const n = {read:0, create:0, change:0, send:0, delete:0, denied:0};
+  c.steps.forEach(s => { if (s.status === 'denied') n.denied++; else n[s.risk]++; });
+  return n;
+}
+function resultHTML(c){
+  const n = counts(c);
+  const cells = [['Created', n.create], ['Changed', n.change]];
+  if (n.send) cells.push(['Sent', n.send]);
+  if (n.delete || !n.send) cells.push(['Deleted', n.delete]);
+  cells.push(['Stopped by you', n.denied]);
+  return `<div class="card result risk-result ${state.seen.has('result') ? '' : 'enter'}" data-id="result" aria-label="Run finished">
+    <div class="card-top"><span class="risk">${ic('check')}Finished</span><span class="time mono">${c.result.at}</span></div>
+    <div class="card-title">${esc(c.result.title)}</div><div class="card-res">${esc(c.result.line)}</div>
+    <div class="tallies">${cells.map(([k, v]) => `<div><b>${v}</b><span>${k}</span></div>`).join('')}</div>
+  </div>`;
+}
+function edgePath(a, b){
+  const x1 = a.x + CW, y1 = a.y + ANCHOR, x2 = b.x - 2, y2 = b.y + ANCHOR;
+  if (Math.abs(y1 - y2) < 1) return `M${x1} ${y1} L${x2} ${y2}`;
+  const mx = (x1 + x2) / 2;
+  return `M${x1} ${y1} C${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+}
+function flowPath(a, b){
+  const sx = a.x + CW / 2, sy = a.y + a.h, tx = b.x - 2, ty = b.y + ANCHOR + 22;
+  return `M${sx} ${sy} C${sx} ${sy + 80}, ${tx - 90} ${ty}, ${tx} ${ty}`;
+}
+function laneInfo(c){
+  const multi = new Set(c.steps.map(s => s.prov)).size > 1;
+  return {
+    key: s => multi ? s.prov : s.svc,
+    label: id => multi ? {name:PROV[id].name, sub:PROV[id].via} : (SVC[id] || {name:id, sub:''})
+  };
+}
+
+function renderCanvas(){
+  const c = cur();
+  if (!el.viewport.clientWidth){ state.dirty = true; return; }
+  state.dirty = false;
+  const all = c.steps;
+  const steps = state.filter === 'changes' ? all.filter(s => s.risk !== 'read') : all;
+  const L = laneInfo(c);
+  const laneIds = [...new Set(steps.map(L.key))];
+  el.nodes.innerHTML = steps.map(s => cardHTML(c, s, all.indexOf(s))).join('') + (c.result ? resultHTML(c) : '');
+  const els = {};
+  el.nodes.querySelectorAll('.card').forEach(n => { els[n.dataset.id] = n; });
+  const laneH = laneIds.map(l => Math.max(MIN_CARD, ...steps.filter(s => L.key(s) === l).map(s => els[s.id].offsetHeight)) + PAD_T + PAD_B);
+  const tops = []; let y = 0;
+  laneH.forEach((h, i) => { tops[i] = y; y += h; });
+  const pos = {};
+  steps.forEach((s, i) => {
+    const x = X0 + i * (CW + GX), top = tops[laneIds.indexOf(L.key(s))] + PAD_T, n = els[s.id];
+    n.style.left = x + 'px'; n.style.top = top + 'px';
+    pos[s.id] = {x, y:top, h:n.offsetHeight, idx:all.indexOf(s)};
+  });
+  let W = X0 + steps.length * (CW + GX);
+  if (c.result){
+    const n = els.result;
+    n.style.left = W + 'px'; n.style.top = PAD_T + 'px';
+    pos.result = {x:W, y:PAD_T, h:n.offsetHeight, idx:all.length};
+    W += CW + GX;
+  }
+  W = W - GX + 80;
+  const H = Math.max(y, c.result ? pos.result.h + PAD_T + PAD_B : 0);
+  Object.assign(state, {pos, worldW:W, worldH:H});
+  el.world.style.width = W + 'px'; el.world.style.height = H + 'px';
+  el.lanes.innerHTML = laneIds.map((l, i) => `<div class="lane ${i % 2 === 0 ? 'a' : ''}" style="top:${tops[i]}px;height:${laneH[i]}px;width:${W}px"></div>`).join('');
+  state.lanes = laneIds.map((l, i) => ({id:l, top:tops[i], h:laneH[i]}));
+  el.rail.innerHTML = state.lanes.map(ln => { const lb = L.label(ln.id); return `<div class="rail-l"><b>${esc(lb.name)}</b><span>${esc(lb.sub)}</span></div>`; }).join('');
+  const seq = steps.map(s => s.id);
+  if (c.result) seq.push('result');
+  let eh = '';
+  for (let i = 0; i < seq.length - 1; i++){
+    const a = pos[seq[i]], b = pos[seq[i+1]];
+    const to = all.find(s => s.id === seq[i+1]);
+    const gate = to && to.status === 'waiting';
+    const flow = to && to.uses && to.uses.some(u => u.from === seq[i]);
+    const cls = gate ? ' gate' : flow ? ' flow' : '';
+    eh += `<path class="e${cls}" data-to="${b.idx}" d="${edgePath(a, b)}" marker-end="url(#${gate ? 'ahg' : flow ? 'ahf' : 'ah'})"/>`;
+  }
+  steps.forEach(s => (s.uses || []).forEach(u => {
+    const ia = seq.indexOf(u.from), ib = seq.indexOf(s.id);
+    if (ia < 0 || ib - ia === 1) return;
+    eh += `<path class="e flow extra" data-to="${pos[s.id].idx}" d="${flowPath(pos[u.from], pos[s.id])}" marker-end="url(#ahf)"/>`;
+  }));
+  el.edges.setAttribute('width', W); el.edges.setAttribute('height', H);
+  el.edgeG.innerHTML = eh;
+  all.forEach(s => state.seen.add(s.id));
+  if (c.result) state.seen.add('result');
+  applyClasses();
+  applyTransform();
+}
+
+function applyClasses(){
+  const c = cur(), vi = state.viewIndex;
+  el.nodes.querySelectorAll('.card').forEach(n => {
+    const id = n.dataset.id;
+    const idx = id === 'result' ? c.steps.length : c.steps.findIndex(s => s.id === id);
+    n.classList.toggle('selected', id === state.selected);
+    n.classList.toggle('future', vi !== null && idx > vi);
+    n.classList.toggle('current', vi !== null && idx === vi);
+  });
+  el.edgeG.querySelectorAll('.e').forEach(p => p.classList.toggle('fut', vi !== null && +p.dataset.to > vi));
+}
+
+function applyTransform(){
+  const {zoom:z, panX:x, panY:y} = state;
+  el.world.style.transform = `translate(${x}px, ${y}px) scale(${z})`;
+  el.viewport.style.backgroundSize = `${22*z}px ${22*z}px`;
+  el.viewport.style.backgroundPosition = `${x}px ${y}px`;
+  el.zoomLabel.textContent = Math.round(z * 100) + '%';
+  const labels = el.rail.children;
+  state.lanes.forEach((ln, i) => {
+    const n = labels[i]; if (!n) return;
+    const top = y + ln.top * z, bottom = y + (ln.top + ln.h) * z;
+    n.style.transform = `translateY(${clamp(top + 10, 10, bottom - 40)}px)`;
+    n.style.opacity = (bottom - top < 44 || bottom < 40) ? 0 : 1;
+  });
+}
+
+function renderSidebar(){
+  el.recents.innerHTML = convs.map(c => {
+    let sub, dot;
+    if (c.status === 'waiting'){ sub = 'Waiting for your OK'; dot = 'wait'; }
+    else if (c.status === 'running'){ sub = 'Working…'; dot = 'run'; }
+    else { sub = `${c.steps.length} steps · ${c.when}`; dot = 'ok'; }
+    return `<li><button type="button" class="recent ${c.id === state.conv && state.page === 'chat' ? 'on' : ''}" data-conv="${c.id}"><span class="recent-title">${esc(c.title)}</span><span class="recent-sub ${c.status === 'waiting' ? 'wait' : ''}"><span class="dot ${dot}"></span><span>${esc(c.agent)} · ${sub}</span></span></button></li>`;
+  }).join('');
+  const waiting = convs.reduce((a, c) => a + c.steps.filter(s => s.status === 'waiting').length, 0);
+  const badge = $('#approvalBadge');
+  badge.hidden = !waiting; badge.textContent = waiting;
+  $('#connBadge').textContent = conns.cli.length + conns.mcp.length;
+  el.nav.querySelectorAll('[data-nav]').forEach(b => b.classList.toggle('on',
+    (state.page === 'connections' && b.dataset.nav === 'connections') || (state.page === 'chat' && b.dataset.nav === 'chats')));
+  el.tabDot.hidden = !cur().steps.some(s => s.status === 'waiting');
+}
+
+function stepRow(c, id){
+  const s = c.steps.find(x => x.id === id); if (!s) return '';
+  const i = c.steps.indexOf(s);
+  const meta = s.status === 'running' ? '<span class="spin"></span>' : s.status === 'denied' ? '<span class="rm">Not run</span>' : `<span class="rm">${s.time}</span>`;
+  return `<button type="button" class="step-row risk-${s.risk} st-${s.status}" data-step="${s.id}" title="Show step ${i+1} on the canvas"><span class="rk">${ic(RISK[s.risk].icon)}</span><span class="rt">${esc(s.title)}</span>${meta}</button>`;
+}
+function approvalHTML(c, id){
+  const s = c.steps.find(x => x.id === id); if (!s) return '';
+  const waiting = s.status === 'waiting';
+  let h = `<div class="approval ${waiting ? '' : 'done'}"><div class="ap-head">${ic(waiting ? 'hand' : 'shield','sm')}${waiting ? 'Needs your approval' : 'Approval'}</div><div class="ap-body"><div class="ap-title">${esc(s.title)}</div>`;
+  if (s.askedBecause) h += `<div class="ap-why">${esc(s.askedBecause)}</div>`;
+  h += `<div class="ap-cmd">${esc(s.cmd)}</div>`;
+  if (waiting) h += `<div class="ap-actions"><button type="button" class="btn link" data-step="${s.id}">Review on canvas</button><button type="button" class="btn" data-act="deny" data-id="${s.id}">${esc(s.noLabel || 'No')}</button><button type="button" class="btn danger" data-act="approve" data-id="${s.id}">${esc(s.yesLabel || 'Approve')}</button></div>`;
+  else if (s.approval){
+    const after = s.risk === 'delete' ? ' Nothing was deleted.' : s.risk === 'send' ? ' Nothing was sent.' : '';
+    h += s.approval.d === 'approve'
+      ? `<div class="ap-result ok">${ic('check','sm')}You approved this at ${s.approval.at}</div>`
+      : `<div class="ap-result no">${ic('x','sm')}You said no at ${s.approval.at}.${after}</div>`;
+  }
+  return h + '</div></div>';
+}
+function renderChat(){
+  const c = cur();
+  el.chatTitle.textContent = c.title;
+  el.chatMeta.innerHTML = `<span class="meta-chip">${ic('bot','sm')}${esc(c.agent)}${c.model ? ' · ' + esc(c.model) : ''}</span><span class="meta-chip mono">${ic('folder','sm')}${esc(c.folder)}</span>`;
+  const initials = c.agent === 'Codex' ? 'CX' : 'CC';
+  let prev = null, h = '';
+  for (const m of c.chat){
+    if (m.t === 'user') h += `<div class="msg-user">${fmt(m.text)}</div>`;
+    else if (m.t === 'agent') h += `<div class="msg-agent">${prev === 'user' || prev === null ? `<div class="agent-name"><span class="agent-av">${initials}</span>${esc(c.agent)}</div>` : ''}<p>${fmt(m.text)}</p></div>`;
+    else if (m.t === 'steps') h += `<div class="step-list">${m.ids.map(id => stepRow(c, id)).join('')}</div>`;
+    else if (m.t === 'approval') h += approvalHTML(c, m.id);
+    prev = m.t;
+  }
+  if (c.status === 'running') h += `<div class="working"><span class="spin"></span>${esc(c.agent)} is working…</div>`;
+  el.messages.innerHTML = h;
+  el.messages.scrollTop = el.messages.scrollHeight;
+  el.input.placeholder = `Reply to ${c.agent}…`;
+  el.agentChip.innerHTML = ic('bot','sm') + esc(c.agent);
+}
+function renderHead(){
+  const c = cur(), n = counts(c), w = c.steps.find(s => s.status === 'waiting');
+  el.canvasSub.textContent = c.sub;
+  el.tally.innerHTML = ['read','create','change','send','delete'].filter(r => n[r]).map(r => {
+    const waiting = w && w.risk === r;
+    return `<span class="pill risk-${r}${waiting ? ' waiting' : ''}" title="${n[r]} ${RISK[r].plural}${waiting ? ', 1 waiting for you' : ''}">${ic(RISK[r].icon)}${n[r]}${waiting ? ' · 1 waiting' : ''}</span>`;
+  }).join('');
+  el.filterSeg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.filter === state.filter));
+}
+function renderScrubber(){
+  const c = cur(), n = c.steps.length, vi = state.viewIndex === null ? n - 1 : state.viewIndex;
+  el.ticks.innerHTML = c.steps.map((s, i) => `<button type="button" class="tick risk-${s.risk} st-${s.status}${i <= vi ? ' on' : ''}${state.viewIndex !== null && i === vi ? ' cur' : ''}" data-i="${i}" title="Step ${i+1} · ${esc(s.title)}" aria-label="Go to step ${i+1}: ${esc(s.title)}"></button>`).join('');
+  el.scrubLabel.innerHTML = `Step ${vi+1} of ${n}<span class="long"> · ${c.steps[vi].time}</span>`;
+  el.liveBtn.hidden = state.viewIndex === null;
+  el.playBtn.innerHTML = state.playing ? ic('pause') + '<span>Pause</span>' : ic('play') + '<span>Replay</span>';
+  el.playBtn.setAttribute('aria-label', state.playing ? 'Pause replay' : 'Replay all steps');
+}
+const sec = (title, body, extra='', cls='') => `<section class="ins-sec ${cls}"><h4><span>${title}</span>${extra}</h4>${body}</section>`;
+function renderInspector(){
+  const c = cur(), s = c.steps.find(x => x.id === state.selected);
+  if (!s){ state.selected = null; el.inspector.hidden = true; return; }
+  const i = c.steps.indexOf(s), r = RISK[s.risk];
+  const mcp = s.via === 'MCP';
+  let h = `<div class="ins-head risk-${s.risk}"><span class="risk">${ic(r.icon)}${r.label}</span><span>Step ${i+1} · ${s.time}</span><button type="button" class="icon-btn" data-act="close" aria-label="Close details">${ic('x')}</button></div>`;
+  h += `<h3 class="ins-title">${esc(s.title)}</h3><div class="ins-where">${esc(PROV[s.prov].name)} · ${esc(s.svc)} · via ${esc(s.via || 'CLI')}</div>`;
+  h += `<div>${statusHTML(s)}</div>` + tagsHTML(s);
+  if (s.status === 'waiting') h += gateButtons(s);
+  if (s.askedBecause) h += sec('Why CloudBuddy asked', `<p>${esc(s.askedBecause)}</p>`, '', 'asked');
+  if (s.generic) h += sec('How CloudBuddy read this', `<p>There's no ${esc(PROV[s.prov].name)} adapter yet, so CloudBuddy guessed from the command: the word “${esc(s.guessWord)}” means a change. The title is the agent's own description. Steps like this ask first unless they're clearly read-only.</p>`);
+  h += sec('Why the agent did this', `<p>${esc(s.why)}</p>`);
+  if (s.uses) h += sec('Uses', `<ul>${s.uses.map(u => `<li>The ${esc(u.what)} from step ${c.steps.findIndex(x => x.id === u.from) + 1}</li>`).join('')}</ul>`);
+  if (s.loss) h += sec(s.status === 'waiting' ? esc(s.lossTitle || 'What will be lost') : 'What was at stake', `<ul>${s.loss.map(l => `<li>${esc(l)}</li>`).join('')}</ul>`);
+  if (s.approval) h += sec('Your decision', `<p>${s.approval.d === 'approve' ? 'Approved' : 'Denied'} by you at ${s.approval.at}.</p>`);
+  if (s.facts) h += sec('Details', factsHTML(s.facts));
+  h += sec(mcp ? 'Tool call' : 'Command', `<pre class="code" id="insCmd">${esc(s.cmd)}</pre>`, `<button type="button" class="copy" data-act="copy">${ic('copy','sm')}Copy</button>`);
+  h += sec(mcp ? 'MCP tool' : 'API call', `<p class="mono">${esc(s.apiFull || s.api)}</p><p class="note">${mcp ? `The tool the agent called on the ${esc(PROV[s.prov].name)} MCP server.` : 'The operation behind this command.'}</p>`);
+  h += sec('Output', s.out ? `<pre class="code">${esc(s.out)}</pre>${s.masked ? `<p class="note">${esc(s.masked)}</p>` : ''}` : '<p>Nothing yet. This step has not run.</p>');
+  el.inspector.innerHTML = h;
+  el.inspector.hidden = false;
+}
+function renderConnections(){
+  const row = x => `<div class="conn-row ${x.rule === 'off' ? 'off' : ''}">
+      <div class="conn-svc"><span class="mark">${esc(x.mark)}</span><div><b>${esc(x.name)}</b><span class="mono">${esc(x.how)}</span></div></div>
+      <div class="cell"><span class="k">Signed in as</span><b>${esc(x.account)}</b><span>${esc(x.detail)}</span></div>
+      <div class="cell"><span class="k">Adapter</span><span class="ad ad-${x.adapter}">${ADAPTER[x.adapter].label}</span><span>${esc(x.adNote || ADAPTER[x.adapter].note)}</span></div>
+      <div class="cell"><label class="k" for="rule-${x.id}">Rule</label><select class="rule" id="rule-${x.id}" data-conn="${x.id}">${RULES.map(([v, l]) => `<option value="${v}"${v === x.rule ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+    </div>`;
+  el.connections.innerHTML = `<div class="conn-inner">
+    <div class="conn-head">
+      <div class="conn-head-text">
+        <h2>Connections</h2>
+        <p>Everything the agent can reach from this computer. CloudBuddy uses the logins already on your machine and never stores your keys.</p>
+        <div class="conn-meta">${conns.cli.length} command-line tools · ${conns.mcp.length} MCP servers · checked at 20:30</div>
+      </div>
+      <button type="button" class="btn" id="scanBtn">${ic('reset','sm')}Scan again</button>
+    </div>
+    <div class="legend-grid">${Object.entries(ADAPTER).map(([k, a]) => `<div class="legend-item"><span class="ad ad-${k}">${a.label}</span>${esc(a.note)}</div>`).join('')}</div>
+    <section class="conn-sec"><h3>Command-line tools <span>${conns.cli.length} found on your PATH</span></h3><div class="conn-list">${conns.cli.map(row).join('')}</div></section>
+    <section class="conn-sec"><h3>MCP servers <span>${conns.mcp.length} set up in your agents</span></h3><div class="conn-list">${conns.mcp.map(row).join('')}</div></section>
+    <div class="conn-foot">${ic('plug')}<p><b>Using a service that isn't listed?</b> If the agent can reach it through a CLI or an MCP server, CloudBuddy already records it with generic checks. Adding an adapter file makes its cards clearer.</p></div>
+  </div>`;
+}
+function rerender(){
+  renderSidebar(); renderChat(); renderHead(); renderCanvas(); renderScrubber();
+  if (state.selected) renderInspector();
+}
+function refresh(c){ if (cur() === c) rerender(); else renderSidebar(); }
+
+/* ---------- Camera ---------- */
+let animTok = 0;
+function animateTo(z, x, y, ms=480){
+  const tok = ++animTok;
+  if (reduced || ms === 0){ Object.assign(state, {zoom:z, panX:x, panY:y}); applyTransform(); return; }
+  const z0 = state.zoom, x0 = state.panX, y0 = state.panY, t0 = performance.now();
+  const step = t => {
+    if (tok !== animTok) return;
+    const k = Math.min(1, (t - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+    state.zoom = z0 + (z - z0) * e; state.panX = x0 + (x - x0) * e; state.panY = y0 + (y - y0) * e;
+    applyTransform();
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+function zoomAt(f, cx, cy){
+  animTok++;
+  const nz = clamp(state.zoom * f, .25, 2), k = nz / state.zoom;
+  state.panX = cx - (cx - state.panX) * k; state.panY = cy - (cy - state.panY) * k; state.zoom = nz;
+  applyTransform();
+}
+function fit(smooth=true){
+  const vw = el.viewport.clientWidth, vh = el.viewport.clientHeight; if (!vw) return;
+  const z = clamp(Math.min((vw - 48) / state.worldW, (vh - 48) / state.worldH), .25, 1);
+  animateTo(z, (vw - state.worldW * z) / 2, (vh - state.worldH * z) / 2, smooth ? 480 : 0);
+}
+function framing(id, z, xFrac){
+  const vw = el.viewport.clientWidth, vh = el.viewport.clientHeight, p = state.pos[id];
+  const insOpen = !el.inspector.hidden;
+  const insW = insOpen && !mobileMQ.matches ? 352 : 0;
+  const insH = insOpen && mobileMQ.matches ? el.inspector.offsetHeight + 8 : 0;
+  const x = (vw - insW) * xFrac - (p.x + CW / 2) * z;
+  let y;
+  if (state.worldH * z <= vh - insH - 32) y = (vh - insH - state.worldH * z) / 2;
+  else y = clamp((vh - insH) / 2 - (p.y + p.h / 2) * z, vh - insH - state.worldH * z - 16, 16);
+  return [x, y];
+}
+function initialView(smooth){
+  const c = cur(), vw = el.viewport.clientWidth, vh = el.viewport.clientHeight;
+  if (!vw || !state.worldW) return;
+  if (Math.min((vw - 48) / state.worldW, (vh - 48) / state.worldH) >= .62){ fit(smooth); return; }
+  const waiting = c.steps.find(s => s.status === 'waiting');
+  const target = waiting ? waiting.id : (c.result && state.pos.result ? 'result' : c.steps[c.steps.length - 1].id);
+  if (!state.pos[target]){ fit(smooth); return; }
+  const z = mobileMQ.matches ? .74 : .86;
+  const [x, y] = framing(target, z, mobileMQ.matches ? .5 : .66);
+  animateTo(z, x, y, smooth ? 480 : 0);
+}
+function focusStep(id, {select=true, z=null, xFrac=.5}={}){
+  if (!state.pos[id] && state.filter !== 'all') setFilter('all', false);
+  if (!state.pos[id]) return;
+  if (select){ state.selected = id; applyClasses(); renderInspector(); }
+  const zz = z === null ? clamp(Math.max(state.zoom, .8), .25, 1.4) : z;
+  const [x, y] = framing(id, zz, xFrac);
+  animateTo(zz, x, y);
+}
+function follow(c, id){
+  if (cur() !== c || state.page !== 'chat' || state.viewIndex !== null || state.playing || state.dirty) return;
+  focusStep(id, {select:false, z:state.zoom, xFrac:mobileMQ.matches ? .5 : .6});
+}
+
+/* ---------- Actions ---------- */
+function toast(msg){
+  el.toast.textContent = msg; el.toast.hidden = false;
+  clearTimeout(toast.t); toast.t = setTimeout(() => { el.toast.hidden = true; }, 2600);
+}
+function selectStep(id){
+  if (id === 'result') return;
+  state.selected = id; applyClasses(); renderInspector();
+}
+function closeInspector(){
+  state.selected = null; el.inspector.hidden = true; applyClasses();
+}
+function setFilter(f, refocus=true){
+  state.filter = f; renderHead(); renderCanvas();
+  if (refocus) initialView(true);
+}
+function setPage(p){
+  state.page = p; el.app.dataset.page = p;
+  closeNav();
+  if (p === 'connections'){ stopPlay(); renderConnections(); el.connections.scrollTop = 0; }
+  renderSidebar();
+  if (p === 'chat' && state.dirty && el.viewport.clientWidth){ renderCanvas(); initialView(false); }
+}
+function setView(v){
+  if (state.page !== 'chat') setPage('chat');
+  el.app.dataset.view = v;
+  el.viewSeg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
+  if (v === 'canvas' && state.dirty){ renderCanvas(); initialView(false); }
+  if (v === 'chat') el.messages.scrollTop = el.messages.scrollHeight;
+}
+function openNav(){ el.app.classList.add('nav-open'); el.scrim.hidden = false; }
+function closeNav(){ el.app.classList.remove('nav-open'); el.scrim.hidden = true; }
+function openConv(id){
+  stopPlay(false);
+  state.conv = id; state.selected = null; state.viewIndex = null; state.filter = 'all';
+  el.inspector.hidden = true;
+  const c = cur();
+  state.seen = new Set(c.steps.map(s => s.id).concat(c.result ? ['result'] : []));
+  if (state.page !== 'chat'){ state.page = 'chat'; el.app.dataset.page = 'chat'; }
+  closeNav();
+  rerender();
+  initialView(false);
+}
+function showOnCanvas(id){
+  if (mobileMQ.matches) setView('canvas');
+  if (state.viewIndex !== null){ state.viewIndex = null; stopPlay(false); applyClasses(); renderScrubber(); }
+  focusStep(id);
+}
+function decide(id, d){
+  const c = convs.find(x => x.steps.some(s => s.id === id));
+  const s = c && c.steps.find(x => x.id === id);
+  if (!s || s.status !== 'waiting' || !c.flow) return;
+  s.approval = {d, at:c.decideAt};
+  c.flow(c, s, d);
+}
+
+/* Replay */
+let playTimer = null;
+function stopPlay(rerenderScrub=true){
+  clearInterval(playTimer); playTimer = null;
+  if (!state.playing) return;
+  state.playing = false;
+  if (rerenderScrub) renderScrubber();
+}
+function goTo(i){
+  const c = cur();
+  state.viewIndex = i >= c.steps.length - 1 ? null : i;
+  applyClasses(); renderScrubber();
+  focusStep(c.steps[i].id, {select:false, z:state.zoom, xFrac:.5});
+}
+function play(){
+  if (state.playing){ stopPlay(); return; }
+  closeInspector();
+  state.playing = true;
+  const c = cur();
+  state.viewIndex = 0; applyClasses(); renderScrubber();
+  focusStep(c.steps[0].id, {select:false, z:state.zoom, xFrac:.5});
+  playTimer = setInterval(() => {
+    if (state.viewIndex === null || state.viewIndex >= c.steps.length - 1){
+      stopPlay(); state.viewIndex = null; applyClasses(); renderScrubber();
+      if (c.result) focusStep('result', {select:false, z:state.zoom, xFrac:.5});
+      return;
+    }
+    state.viewIndex++; applyClasses(); renderScrubber();
+    focusStep(c.steps[state.viewIndex].id, {select:false, z:state.zoom, xFrac:.5});
+  }, 1050);
+}
+
+/* ---------- Events ---------- */
+el.recents.addEventListener('click', e => {
+  const b = e.target.closest('[data-conv]'); if (b) openConv(b.dataset.conv);
+});
+el.nav.addEventListener('click', e => {
+  const b = e.target.closest('[data-nav]'); if (!b) return;
+  const k = b.dataset.nav;
+  if (k === 'chats'){ setPage('chat'); return; }
+  if (k === 'connections'){ setPage('connections'); return; }
+  if (k === 'approvals'){
+    const w = convs.find(c => c.steps.some(s => s.status === 'waiting'));
+    if (!w){ toast('Nothing is waiting for your approval.'); return; }
+    if (state.conv !== w.id) openConv(w.id); else setPage('chat');
+    showOnCanvas(w.steps.find(s => s.status === 'waiting').id);
+    return;
+  }
+  toast('Settings are not part of this mockup yet.');
+});
+$('#newChat').addEventListener('click', () => toast('New chats are not wired up in this mockup.'));
+$('#resetBtn').addEventListener('click', () => {
+  timers.forEach(clearTimeout); timers.length = 0;
+  convs = seed(); conns = seedConnections();
+  openConv('news'); toast('Demo reset.');
+});
+$('#menuBtn').addEventListener('click', openNav);
+$('#menuBtn2').addEventListener('click', openNav);
+el.scrim.addEventListener('click', closeNav);
+el.viewSeg.addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) setView(b.dataset.view); });
+
+el.messages.addEventListener('click', e => {
+  const act = e.target.closest('[data-act]');
+  if (act){ decide(act.dataset.id, act.dataset.act); return; }
+  const st = e.target.closest('[data-step]');
+  if (st) showOnCanvas(st.dataset.step);
+});
+el.composer.addEventListener('submit', e => {
+  e.preventDefault();
+  const v = el.input.value.trim(); if (!v) return;
+  const c = cur();
+  c.chat.push({t:'user', text:v}); el.input.value = ''; renderChat();
+  later(700, () => {
+    c.chat.push({t:'agent', text:`This is a mockup, so nothing runs here. In the real app, ${c.agent} would pick up your message and every step it takes would land on the canvas.`});
+    if (cur() === c) renderChat();
+  });
+});
+el.input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); el.composer.requestSubmit(); }
+});
+
+el.connections.addEventListener('change', e => {
+  const sel = e.target.closest('select[data-conn]'); if (!sel) return;
+  const x = conns.cli.concat(conns.mcp).find(k => k.id === sel.dataset.conn); if (!x) return;
+  x.rule = sel.value;
+  sel.closest('.conn-row').classList.toggle('off', x.rule === 'off');
+  toast(`${x.name}: rule saved. It applies from the next step.`);
+});
+el.connections.addEventListener('click', e => {
+  if (e.target.closest('#scanBtn')) toast(`Scanned. ${conns.cli.length} tools and ${conns.mcp.length} MCP servers found.`);
+});
+
+el.filterSeg.addEventListener('click', e => { const b = e.target.closest('[data-filter]'); if (b && b.dataset.filter !== state.filter) setFilter(b.dataset.filter); });
+$('#zoomIn').addEventListener('click', () => zoomAt(1.2, el.viewport.clientWidth / 2, el.viewport.clientHeight / 2));
+$('#zoomOut').addEventListener('click', () => zoomAt(1 / 1.2, el.viewport.clientWidth / 2, el.viewport.clientHeight / 2));
+$('#fitBtn').addEventListener('click', () => fit(true));
+
+el.nodes.addEventListener('click', e => {
+  const act = e.target.closest('[data-act]');
+  if (act) decide(act.dataset.id, act.dataset.act);
+});
+el.nodes.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const card = e.target.closest('.card');
+  if (card && e.target === card){ e.preventDefault(); selectStep(card.dataset.id); }
+});
+el.inspector.addEventListener('click', e => {
+  const act = e.target.closest('[data-act]'); if (!act) return;
+  const a = act.dataset.act;
+  if (a === 'close') closeInspector();
+  else if (a === 'copy'){
+    const s = cur().steps.find(x => x.id === state.selected); if (!s) return;
+    const fallback = () => {
+      const r = document.createRange(); r.selectNodeContents($('#insCmd'));
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      toast('Selected. Press ⌘C to copy.');
+    };
+    try { navigator.clipboard.writeText(s.cmd).then(() => toast('Copied.'), fallback); } catch (err) { fallback(); }
+  }
+  else decide(act.dataset.id, a);
+});
+el.playBtn.addEventListener('click', play);
+el.liveBtn.addEventListener('click', () => {
+  stopPlay(false); state.viewIndex = null; applyClasses(); renderScrubber();
+  const c = cur(), last = c.result ? 'result' : c.steps[c.steps.length - 1].id;
+  focusStep(last, {select:false, z:state.zoom, xFrac:.5});
+});
+el.ticks.addEventListener('click', e => {
+  const t = e.target.closest('[data-i]'); if (!t) return;
+  stopPlay(false); goTo(+t.dataset.i);
+});
+
+/* Pan and zoom */
+el.viewport.addEventListener('wheel', e => {
+  if (e.target.closest('.inspector')) return;
+  e.preventDefault();
+  const r = el.viewport.getBoundingClientRect();
+  if (e.ctrlKey || e.metaKey) zoomAt(Math.exp(-e.deltaY * .01), e.clientX - r.left, e.clientY - r.top);
+  else { animTok++; state.panX -= e.deltaX; state.panY -= e.deltaY; applyTransform(); }
+}, {passive:false});
+const ptrs = new Map();
+let drag = null, pinch = null;
+el.viewport.addEventListener('pointerdown', e => {
+  if (e.button !== 0 && e.pointerType === 'mouse') return;
+  if (e.target.closest('button, .inspector, a, input, textarea, select')) return;
+  el.viewport.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  animTok++;
+  if (ptrs.size === 1) drag = {sx:e.clientX, sy:e.clientY, px:state.panX, py:state.panY, moved:false, card:e.target.closest('.card')};
+  else if (ptrs.size === 2){
+    const [a, b] = [...ptrs.values()];
+    pinch = {d:Math.hypot(a.x - b.x, a.y - b.y), z:state.zoom}; drag = null;
+  }
+});
+el.viewport.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  if (pinch && ptrs.size === 2){
+    const [a, b] = [...ptrs.values()], r = el.viewport.getBoundingClientRect();
+    const target = clamp(pinch.z * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d, .25, 2);
+    zoomAt(target / state.zoom, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+  } else if (drag){
+    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    if (!drag.moved && Math.hypot(dx, dy) > 4){ drag.moved = true; el.viewport.classList.add('grabbing'); }
+    if (drag.moved){ state.panX = drag.px + dx; state.panY = drag.py + dy; applyTransform(); }
+  }
+});
+function endPointer(e){
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.delete(e.pointerId);
+  if (drag && !drag.moved && e.type === 'pointerup'){
+    if (drag.card) selectStep(drag.card.dataset.id);
+    else if (!el.inspector.hidden) closeInspector();
+  }
+  drag = null;
+  if (ptrs.size < 2) pinch = null;
+  el.viewport.classList.remove('grabbing');
+}
+el.viewport.addEventListener('pointerup', endPointer);
+el.viewport.addEventListener('pointercancel', endPointer);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape'){ if (!el.inspector.hidden) closeInspector(); closeNav(); }
+});
+let rz;
+window.addEventListener('resize', () => {
+  clearTimeout(rz);
+  rz = setTimeout(() => {
+    if (state.dirty && el.viewport.clientWidth){ renderCanvas(); initialView(false); }
+    else applyTransform();
+    if (window.innerWidth > 1100) closeNav();
+  }, 80);
+});
+
+/* ---------- Boot ---------- */
+state.seen = new Set(cur().steps.map(s => s.id));
+rerender();
+initialView(false);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (state.page === 'chat'){ renderCanvas(); initialView(false); } });
+})();
+</script>

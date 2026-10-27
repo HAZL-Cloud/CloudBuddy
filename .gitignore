@@ -1,0 +1,20 @@
+# build output
+/bin/
+/web/dist/
+/web/node_modules/
+node_modules/
+*.test
+coverage.out
+
+# local state
+/.cloudbuddy/
+/tmp/
+.env
+.env.*
+*.log
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
+/spikes/run/
