@@ -322,3 +322,57 @@ func TestLocalSecurity(t *testing.T) {
 	}
 	_ = url.URL{}
 }
+
+// A Connections rule changes what happens to the next step (Phase 6 exit).
+func TestConnectionRuleApplies(t *testing.T) {
+	e := newEnv(t, filepath.Join(repoRoot(), "testdata", "scenarios", "demo.json"))
+	e.signIn()
+	st := e.srv.eng.Store()
+	if err := st.SaveConnections(context.Background(), []model.Connection{
+		{ID: "cli:aws", Kind: "cli", Name: "AWS", Mark: "AW", How: "aws", Adapter: "builtin", Supported: true},
+		{ID: "cli:stripe", Kind: "cli", Name: "Stripe", Mark: "St", How: "stripe", Adapter: "builtin", Supported: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, b := e.do("PUT", "/api/connections/cli:aws/rule", map[string]string{"rule": "readonly"}, nil); code != 200 {
+		t.Fatalf("set rule: %d %s", code, b)
+	}
+	if code, _ := e.do("PUT", "/api/connections/cli:aws/rule", map[string]string{"rule": "anything"}, nil); code != 400 {
+		t.Fatalf("bad rule accepted")
+	}
+	if code, b := e.do("PUT", "/api/connections/cli:stripe/rule", map[string]string{"rule": "off"}, nil); code != 200 {
+		t.Fatalf("set rule: %d %s", code, b)
+	}
+	_, b := e.do("POST", "/api/conversations", map[string]string{"agent": "fake", "workdir": e.work, "text": "go"}, nil)
+	var created struct{ ID string }
+	_ = json.Unmarshal(b, &created)
+	// read-only AWS: creates are denied without asking; reads still run.
+	// Stripe off: denied. Only the curl to api.stripe.com and the AWS delete
+	// would have asked; answer no to anything that does.
+	for {
+		d := e.waitFor(created.ID, "end", func(d model.ConversationDetail) bool {
+			return waiting(d) != nil || d.Status == model.ConvDone || d.Status == model.ConvFailed
+		})
+		w := waiting(d)
+		if w == nil {
+			break
+		}
+		if strings.HasPrefix(w.Command, "aws s3api create-bucket") || strings.HasPrefix(w.Command, "stripe") {
+			t.Fatalf("asked for something the rules deny: %s", w.Command)
+		}
+		e.do("POST", "/api/approvals/"+w.Approval.ID, map[string]string{"decision": "deny"}, nil)
+	}
+	d := e.detail(created.ID)
+	for _, s := range d.Steps {
+		switch {
+		case strings.HasPrefix(s.Command, "aws s3api create-bucket"), strings.HasPrefix(s.Command, "stripe prices"):
+			if s.Status != model.StatusDenied || s.Approval != nil {
+				t.Errorf("%s: status %s approval %v, want denied without asking", s.Command, s.Status, s.Approval != nil)
+			}
+		case strings.HasPrefix(s.Command, "aws sts get-caller-identity"):
+			if s.Status != model.StatusDone {
+				t.Errorf("read under read-only rule: %s", s.Status)
+			}
+		}
+	}
+}

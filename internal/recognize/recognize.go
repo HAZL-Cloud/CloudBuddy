@@ -467,7 +467,12 @@ func pinnedOK(s segment, env Env) bool {
 // mergeCautious folds the generic layer's view into an adapter's (D-026).
 // The adapter can make a call more precise, never less cautious.
 func mergeCautious(ad *Draft, g Draft) {
-	ad.raise(g.Action)
+	// "unknown" from the generic layer means it had no opinion, not a
+	// warning; its real warning signals (warning words, tags, live, opaque,
+	// network kind, identity) still apply below.
+	if g.Action != model.ActionUnknown {
+		ad.raise(g.Action)
+	}
 	if g.Opaque {
 		ad.Opaque = true
 	}

@@ -14,6 +14,8 @@ rules:
   - {match: [configure, get], action: read, reviewed: true, product: Account}
   - {match: [s3, ls], action: read, reviewed: true, title: "Listed S3"}
   - {match: [s3, presign], action: read, reviewed: true}
+  - {match: [s3, mb], action: create, product: S3, title: "Created an S3 bucket"}
+  - {match: [s3, website], action: change, product: S3}
   - {match: [s3, cp], action: create, title: "Copied files with S3"}
   - {match: [s3, sync], action: create, title: "Synced files to S3"}
   - {match: [s3, mv], action: change, loss_title: "What will happen", loss: ["Moves the files: the originals are removed"]}
