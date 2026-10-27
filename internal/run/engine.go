@@ -42,8 +42,8 @@ type Engine struct {
 	hints   map[string]recognize.Hints // runID/server/tool
 
 	workMu    sync.Mutex
-	workLk    map[string]*sync.RWMutex // held while kind-B code runs in a folder (D-029)
-	heldLocks map[string]*sync.RWMutex // release token hash -> held folder lock
+	workLk    map[string]*sync.RWMutex   // held while kind-B code runs in a folder (D-029)
+	heldLocks map[string][]*sync.RWMutex // release token hash -> held folder locks
 
 	pinOnce sync.Once
 	pinned  map[string]string
@@ -55,6 +55,7 @@ type Engine struct {
 
 type Run struct {
 	ID, ConvID, Agent, Workdir string
+	Folders                    []string // the project's other folders that still exist
 	cancel                     context.CancelFunc
 	canary                     atomic.Bool
 	ended                      atomic.Bool
@@ -72,7 +73,7 @@ func New(cfg config.Config, st *store.Store, b *bus.Bus, adapters *recognize.Ada
 		claude: &agent.Claude{Bin: cfg.Bin, DataDir: cfg.DataDir, Home: cfg.Home},
 		codex:  &agent.Codex{DataDir: cfg.DataDir, Home: cfg.Home},
 		runs:   map[string]*Run{}, active: map[string]*Run{}, waiters: map[string]chan bool{},
-		hints: map[string]recognize.Hints{}, workLk: map[string]*sync.RWMutex{}, heldLocks: map[string]*sync.RWMutex{}}
+		hints: map[string]recognize.Hints{}, workLk: map[string]*sync.RWMutex{}, heldLocks: map[string][]*sync.RWMutex{}}
 }
 
 // UseFake makes the "fake" agent available (dev demo and tests).
@@ -91,7 +92,12 @@ func (e *Engine) Recover(ctx context.Context) error {
 	return err
 }
 
-func (e *Engine) env(workdir string) recognize.Env {
+// projectFolders is the working folder and the project's other folders.
+func (r *Run) projectFolders() []string {
+	return append([]string{r.Workdir}, r.Folders...)
+}
+
+func (e *Engine) env(r *Run) recognize.Env {
 	e.pinOnce.Do(func() {
 		e.pinned = map[string]string{}
 		for _, bin := range recognize.CloudCLINames() {
@@ -100,7 +106,8 @@ func (e *Engine) env(workdir string) recognize.Env {
 			}
 		}
 	})
-	return recognize.Env{Home: e.cfg.Home, DataDir: e.cfg.DataDir, Port: e.cfg.Port, Workdir: workdir, CloudBuddyBin: e.cfg.Bin, Pinned: e.pinned}
+	return recognize.Env{Home: e.cfg.Home, DataDir: e.cfg.DataDir, Port: e.cfg.Port, Workdir: r.Workdir, Folders: r.Folders,
+		CloudBuddyBin: e.cfg.Bin, Pinned: e.pinned}
 }
 
 // ---------- conversations ----------
@@ -147,22 +154,6 @@ func (e *Engine) validWorkdir(dir string) (string, error) {
 	return real, nil
 }
 
-func (e *Engine) StartConversation(ctx context.Context, agentName, workdir, text string) (string, error) {
-	if agentName != "claude" && agentName != "codex" && !(agentName == "fake" && e.fake != nil) {
-		return "", fmt.Errorf("unknown agent %q", agentName)
-	}
-	wd, err := e.validWorkdir(workdir)
-	if err != nil {
-		return "", err
-	}
-	id := store.NewID("cv")
-	if err := e.st.CreateConversation(ctx, store.Conversation{ID: id, Title: titleFrom(text), Agent: agentName, Workdir: wd, Status: model.ConvIdle}); err != nil {
-		return "", err
-	}
-	e.bus.Publish(bus.Event{Type: "conversations"})
-	return id, e.SendMessage(ctx, id, text)
-}
-
 func (e *Engine) SendMessage(ctx context.Context, convID, text string) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -177,7 +168,7 @@ func (e *Engine) SendMessage(ctx context.Context, convID, text string) error {
 		e.mu.Unlock()
 		return ErrBusy
 	}
-	r := &Run{ID: store.NewID("run"), ConvID: convID, Agent: c.Agent, Workdir: c.Workdir, done: make(chan struct{}),
+	r := &Run{ID: store.NewID("run"), ConvID: convID, Agent: c.Agent, Workdir: c.Workdir, Folders: existingDirs(c.ExtraFolders), done: make(chan struct{}),
 		gated: map[string]bool{}, codexPath: map[string][]string{}, escalated: map[string]bool{}, gateways: map[string]bool{}}
 	e.active[convID] = r
 	e.runs[r.ID] = r
@@ -230,7 +221,7 @@ func (e *Engine) drive(ctx context.Context, r *Run, c store.Conversation, prompt
 	runDir := e.cfg.RunDir(r.ID)
 	_ = os.MkdirAll(runDir, 0o700)
 	events := make(chan agent.Event, 64)
-	opts := agent.StartOptions{RunID: r.ID, Workdir: r.Workdir, Prompt: prompt, SessionID: c.AgentSessionID,
+	opts := agent.StartOptions{RunID: r.ID, Workdir: r.Workdir, Folders: r.Folders, Prompt: prompt, SessionID: c.AgentSessionID,
 		RunDir: runDir, Brief: agent.Brief,
 		Env: map[string]string{"CB_GATE_URL": e.cfg.GateURL(), "CB_GATE_TOKEN": e.cfg.GateToken, "CB_RUN_ID": r.ID}}
 	opts.MCP = e.gatewaySpecs(r, runDir)

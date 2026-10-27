@@ -6,7 +6,9 @@ import type {
   Connection,
   ConnectionsResponse,
   ConversationDetail,
+  Project,
   RunResult,
+  Settings,
   Step,
   StepStatus,
   Tag,
@@ -112,6 +114,8 @@ function conv(
     agent: AgentName
     model: string
     workdir: string
+    projectId?: string
+    extraFolders?: string[]
     subtitle: string
     status: ConversationDetail['status']
     day?: number
@@ -137,6 +141,8 @@ function conv(
     agent: head.agent,
     model: head.model,
     workdir: head.workdir,
+    projectId: head.projectId,
+    extraFolders: head.extraFolders ?? [],
     status: head.status,
     updatedAt: last?.endedAt ?? last?.startedAt ?? first,
     stepCount: steps.length,
@@ -266,7 +272,7 @@ export function newsletterConv(): ConversationDetail {
   ]
   return conv(
     {
-      id: 'news', title: 'Launch the paid newsletter', agent: 'claude', model: 'Opus 5.5', workdir: '~/code/shipyard-newsletter',
+      id: 'news', title: 'Launch the paid newsletter', agent: 'claude', model: 'Opus 5.5', workdir: '~/code/shipyard-newsletter', projectId: 'newsletter',
       subtitle: '4 providers · Resend, Cloudflare, Stripe, Google Cloud', status: 'waiting',
     },
     steps,
@@ -384,7 +390,8 @@ export function deployConv(): ConversationDetail {
   ]
   return conv(
     {
-      id: 'deploy', title: 'Deploy shop site to S3 + CloudFront', agent: 'claude', model: 'Opus 5.5', workdir: '~/code/shipyard-web',
+      id: 'deploy', title: 'Deploy shop site to S3 + CloudFront', agent: 'claude', model: 'Opus 5.5', workdir: '~/code/shipyard-web', projectId: 'shop',
+      extraFolders: ['~/code/shipyard-infra'],
       subtitle: 'AWS · us-east-1 · account 4821-9365-0217', status: 'done',
       result: { title: 'Your site is live', line: 'd3k9x7f2m1q8.cloudfront.net', at: at('20:15:21') },
     },
@@ -561,6 +568,18 @@ export function ec2Conv(): ConversationDetail {
 
 export function seedConversations(): ConversationDetail[] {
   return [newsletterConv(), deployConv(), alarmConv(), ec2Conv()]
+}
+
+export function seedProjects(): Project[] {
+  const updatedAt = new Date().toISOString()
+  return [
+    { id: 'newsletter', name: 'Newsletter', folders: ['~/code/shipyard-newsletter'], chatCount: 0, updatedAt },
+    { id: 'shop', name: 'Shipyard shop', folders: ['~/code/shipyard-web', '~/code/shipyard-infra'], chatCount: 0, updatedAt },
+  ]
+}
+
+export function seedSettings(): Settings {
+  return { agent: 'claude', folder: '~/code/shipyard-infra' }
 }
 
 export function seedConnections(): ConnectionsResponse {

@@ -36,6 +36,7 @@ type Approver func(ctx context.Context, method string, params json.RawMessage) (
 type StartOptions struct {
 	RunID     string
 	Workdir   string
+	Folders   []string // the project's other folders: the agent may read and write them too
 	Prompt    string
 	SessionID string // continue this agent session
 	Model     string

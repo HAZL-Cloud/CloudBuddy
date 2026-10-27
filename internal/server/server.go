@@ -74,6 +74,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.auth(s.handleMessage))
 	mux.HandleFunc("POST /api/conversations/{id}/stop", s.auth(s.handleStop))
 	mux.HandleFunc("POST /api/approvals/{id}", s.auth(s.handleDecide))
+	mux.HandleFunc("GET /api/settings", s.auth(s.handleSettings))
+	mux.HandleFunc("PUT /api/settings", s.auth(s.handleSaveSettings))
+	mux.HandleFunc("GET /api/projects", s.auth(s.handleProjects))
+	mux.HandleFunc("POST /api/projects", s.auth(s.handleSaveProject))
+	mux.HandleFunc("PUT /api/projects/{id}", s.auth(s.handleSaveProject))
+	mux.HandleFunc("DELETE /api/projects/{id}", s.auth(s.handleDeleteProject))
 	mux.HandleFunc("GET /api/connections", s.auth(s.handleConnections))
 	mux.HandleFunc("POST /api/connections/scan", s.auth(s.handleScan))
 	mux.HandleFunc("PUT /api/connections/{id}/rule", s.auth(s.handleRule))
@@ -228,17 +234,88 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
-	var body struct{ Agent, Workdir, Text string }
+	var body struct {
+		Agent, Workdir, Text string
+		ProjectID            string `json:"projectId"`
+	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, 400, "bad_request")
 		return
 	}
-	id, err := s.eng.StartConversation(r.Context(), body.Agent, body.Workdir, body.Text)
+	id, err := s.eng.StartConversation(r.Context(), run.StartInput{Agent: body.Agent, Workdir: body.Workdir, ProjectID: body.ProjectID, Text: body.Text})
+	switch {
+	case errors.Is(err, run.ErrNoFolder):
+		writeErr(w, 400, "no_folder")
+	case err != nil:
+		writeErr(w, 400, err.Error())
+	default:
+		writeJSON(w, 200, map[string]string{"id": id})
+	}
+}
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	set, err := s.eng.Settings(r.Context())
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, set)
+}
+
+func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
+	var body model.Settings
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, 400, "bad_request")
+		return
+	}
+	set, err := s.eng.SaveSettings(r.Context(), body)
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]string{"id": id})
+	writeJSON(w, 200, set)
+}
+
+func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
+	list, err := s.eng.Projects(r.Context())
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, list)
+}
+
+// handleSaveProject creates (POST) or updates (PUT) a project.
+func (s *Server) handleSaveProject(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name    string   `json:"name"`
+		Folders []string `json:"folders"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, 400, "bad_request")
+		return
+	}
+	p, err := s.eng.SaveProject(r.Context(), model.Project{ID: r.PathValue("id"), Name: body.Name, Folders: body.Folders})
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeErr(w, 404, "not_found")
+	case err != nil:
+		writeErr(w, 400, err.Error())
+	default:
+		writeJSON(w, 200, p)
+	}
+}
+
+func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
+	err := s.eng.DeleteProject(r.Context(), r.PathValue("id"))
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeErr(w, 404, "not_found")
+	case err != nil:
+		writeErr(w, 500, err.Error())
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {

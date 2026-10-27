@@ -42,6 +42,8 @@ It protects against:
 
     Everything else asks, even if CloudBuddy can name it.
 
+**The project folders.** A chat outside a project has one folder. A chat in a project (D-054) has the project's folders, as they were when the chat started. All of them count as the project: the agent may change files in any of them (Claude Code gets `--add-dir`, Codex gets them as writable roots), uploads from them don't count as "files outside the project", and approved code with network may write in all of them. While approved code runs, every one of the chat's folders is locked, so no new step is decided until it finishes. CloudBuddy's own folder and the agents' settings stay refused inside a project folder too.
+
 Approvals are **single use**. Each is tied to the exact command and the hash of the files it runs, consumed once, and cancelled if the run ends. Nothing is ever approved by waiting.
 
 ## Fail closed

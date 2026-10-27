@@ -231,3 +231,50 @@ func TestReleaseReviewBypassesAsk(t *testing.T) {
 		}
 	}
 }
+
+// A project's other folders count as project folders (D-054): writing there
+// runs like writing in the working folder, and files there aren't "outside
+// the project". Folders that aren't in the project still ask.
+func TestProjectFoldersCountAsProject(t *testing.T) {
+	ads, err := recognize.LoadAdapters("", adapters.FS())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := env
+	project.Folders = []string{"/code/infra"}
+	project.Pinned = map[string]string{"aws": "/opt/homebrew/bin/aws"}
+	single := project
+	single.Folders = nil
+
+	write := func(e recognize.Env, p string) Decision {
+		d := recognize.Recognize(recognize.Call{Agent: "claude", Via: "file", Tool: "Write", Paths: []string{p}, Cwd: "/work"}, e, ads)
+		return Decide(d, Context{CanWrapCode: true})
+	}
+	if got := write(project, "/code/infra/main.tf"); got.Verdict != Allow {
+		t.Errorf("write in a project folder: row %d %s", got.Row, got.Reason)
+	}
+	if got := write(project, "/code/infra-old/main.tf"); got.Verdict != Ask {
+		t.Errorf("write next to a project folder (same prefix) didn't ask: row %d", got.Row)
+	}
+	if got := write(project, "/elsewhere/main.tf"); got.Verdict != Ask {
+		t.Errorf("write outside the project didn't ask: row %d", got.Row)
+	}
+	if got := write(single, "/code/infra/main.tf"); got.Verdict != Ask {
+		t.Errorf("write in a folder of no project didn't ask: row %d", got.Row)
+	}
+
+	upload := "aws s3 cp /code/infra/dist/site.zip s3://bucket/site.zip"
+	call := recognize.Call{Agent: "claude", Via: "shell", Command: upload, WantsNetwork: true, Cwd: "/work"}
+	if d := recognize.Recognize(call, project, ads); len(d.ExternalFiles) != 0 {
+		t.Errorf("file in a project folder counted as outside: %v", d.ExternalFiles)
+	}
+	if d := recognize.Recognize(call, single, ads); len(d.ExternalFiles) == 0 {
+		t.Errorf("file in a folder of no project not counted as outside")
+	}
+	// the protected folders stay protected inside a project folder
+	project.Folders = []string{"/Users/test"}
+	d := recognize.Recognize(recognize.Call{Agent: "claude", Via: "file", Tool: "Write", Paths: []string{"/Users/test/.cloudbuddy/x"}, Cwd: "/work"}, project, ads)
+	if got := Decide(d, Context{CanWrapCode: true}); got.Verdict != Deny {
+		t.Errorf("CloudBuddy's own folder writable through a project folder: row %d", got.Row)
+	}
+}

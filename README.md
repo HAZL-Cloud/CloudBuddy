@@ -12,8 +12,9 @@ You approve or deny right on the canvas.
 
 ![The CloudBuddy canvas](docs/screenshot.jpg)
 
-- **Chat** with the agent, like the Claude desktop app.
-- **Canvas** beside the chat: one card per cloud step, left to right in order, one lane per provider. Back-to-back reads stack into one card. A line runs from something a step created to each later step that builds on it; a value found earlier is a chip you can hover to trace.
+- **Chat** with the agent, like the Claude desktop app. Its replies are formatted (lists, tables, code blocks you can copy).
+- **Projects**: a name and the folders that belong together, such as an app and its infrastructure code. Start a chat in a project and the agent has all of them.
+- **Canvas** beside the chat, which you can fold away to give the chat the room: one card per cloud step, left to right in order, one lane per provider. Back-to-back reads stack into one card. A line runs from something a step created to each later step that builds on it; a value found earlier is a chip you can hover to trace.
 - **Approvals** before deletes, payments, sends and live-mode changes, with what will be lost and the agent's reason.
 - **History**: every chat keeps its canvas. Reopen it, replay it step by step.
 - **Connections**: which CLIs and MCP servers the agent can reach, who they are signed in as, and a rule per connection (Off, Read-only, Ask before every change…).
@@ -37,7 +38,7 @@ bin/cloudbuddy      # opens your browser
 
 CloudBuddy prints a one-time link and opens it. The link signs your browser in and works once. To open CloudBuddy again later, restart it for a new link.
 
-Click **New chat**, pick the agent and the project folder, and describe the job.
+Pick your agent in **Settings**, add a project (its name and folders) with **+** next to Projects, then click **New chat** and describe the job. The first message starts the chat.
 
 ### Try it without an agent
 

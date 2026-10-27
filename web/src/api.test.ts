@@ -65,12 +65,38 @@ describe('approving and denying in mock mode (as in the mockup)', () => {
     await expect(api.sendMessage('news', 'hello')).rejects.toMatchObject({ status: 409 })
   })
 
-  it('starts a new chat and replies', async () => {
-    const { id } = await api.createConversation({ agent: 'codex', workdir: '~/code/x', text: 'List my buckets' })
+  it('starts a new chat with the agent and folder from Settings, and replies', async () => {
+    await api.saveSettings({ agent: 'codex', folder: '~/code/x' })
+    const { id } = await api.createConversation({ text: 'List my buckets' })
     await vi.waitFor(async () => expect((await api.conversation(id)).status).toBe('done'))
     const c = await api.conversation(id)
-    expect(c).toMatchObject({ agent: 'codex', workdir: '~/code/x', title: 'List my buckets' })
+    expect(c).toMatchObject({ agent: 'codex', workdir: '~/code/x', extraFolders: [], title: 'List my buckets' })
     expect(c.chat.map((i) => i.type)).toEqual(['user', 'agent'])
+  })
+
+  it('starts a chat in a project: the first folder is where it starts, the rest come along', async () => {
+    const p = await api.createProject({ name: 'Billing', folders: ['~/code/billing', '~/code/infra'] })
+    const { id } = await api.createConversation({ text: 'Deploy it', projectId: p.id })
+    expect(await api.conversation(id)).toMatchObject({ projectId: p.id, workdir: '~/code/billing', extraFolders: ['~/code/infra'] })
+    expect((await api.projects()).find((x) => x.id === p.id)?.chatCount).toBe(1)
+  })
+
+  it('says no_folder when there is no project and no folder in Settings', async () => {
+    await api.saveSettings({ agent: 'claude', folder: '' })
+    await expect(api.createConversation({ text: 'hi' })).rejects.toMatchObject({ status: 400, code: 'no_folder' })
+  })
+})
+
+describe('projects in mock mode', () => {
+  it('creates, renames and deletes a project; its chats stay', async () => {
+    await expect(api.createProject({ name: 'x', folders: ['relative'] })).rejects.toMatchObject({ status: 400 })
+    const p = await api.createProject({ name: '  Shop   site ', folders: ['~/a', '~/a', '/b'] })
+    expect(p).toMatchObject({ name: 'Shop site', folders: ['~/a', '/b'] })
+    const { id } = await api.createConversation({ text: 'hi', projectId: p.id })
+    expect((await api.updateProject(p.id, { name: 'Shop', folders: ['~/a'] })).chatCount).toBe(1)
+    await api.deleteProject(p.id)
+    await expect(api.deleteProject(p.id)).rejects.toMatchObject({ status: 404 })
+    expect((await api.conversation(id)).projectId).toBeUndefined()
   })
 })
 

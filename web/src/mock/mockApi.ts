@@ -6,11 +6,14 @@ import type {
   ConversationDetail,
   ConversationSummary,
   Decision,
+  Project,
+  ProjectInput,
   Rule,
+  Settings,
   Step,
   StreamEvent,
 } from '../types'
-import { seedConnections, seedConversations } from './data'
+import { seedConnections, seedConversations, seedProjects, seedSettings } from './data'
 
 // A stand-in for the Go server, used when VITE_MOCK=1 and by the tests. It answers the same paths with the same
 // status codes as docs/api.md, so the real client code (CSRF header, 401, 409) is exercised too.
@@ -24,6 +27,8 @@ const AGENTS: Agent[] = [
 
 interface MockState {
   convs: ConversationDetail[]
+  projects: Project[]
+  settings: Settings
   connections: ConnectionsResponse
   signedIn: boolean
   /** Multiplies every delay. Tests set it to 0. */
@@ -33,6 +38,8 @@ interface MockState {
 
 const state: MockState = {
   convs: seedConversations(),
+  projects: seedProjects(),
+  settings: seedSettings(),
   connections: seedConnections(),
   signedIn: true,
   speed: 1,
@@ -57,10 +64,14 @@ export function resetMock(): void {
   timers.forEach(clearTimeout)
   timers.clear()
   state.convs = seedConversations()
+  state.projects = seedProjects()
+  state.settings = seedSettings()
   state.connections = seedConnections()
   state.signedIn = true
   emit({ type: 'conversations' })
   emit({ type: 'connections' })
+  emit({ type: 'projects' })
+  emit({ type: 'settings' })
 }
 
 function later(ms: number, fn: () => void): void {
@@ -81,8 +92,8 @@ const newest = () => {
 }
 
 function summary(c: ConversationDetail): ConversationSummary {
-  const { id, title, agent, model, workdir, status, updatedAt, stepCount, waitingCount } = c
-  return { id, title, agent, model, workdir, status, updatedAt, stepCount, waitingCount }
+  const { id, title, agent, model, workdir, projectId, status, updatedAt, stepCount, waitingCount } = c
+  return { id, title, agent, model, workdir, projectId, status, updatedAt, stepCount, waitingCount }
 }
 
 // Keeps the summary fields in step with the steps after every change.
@@ -111,15 +122,39 @@ function replyLater(c: ConversationDetail, delay: number): void {
   })
 }
 
-function createConversation(body: { agent: AgentName; workdir: string; text: string }): { id: string } {
+// The mock can't look at the disk, so it only checks that a folder is a full path.
+function checkFolders(folders: unknown): string[] {
+  const list = Array.isArray(folders) ? folders.map((f) => String(f).trim()).filter(Boolean) : []
+  const out = [...new Set(list)]
+  if (out.length === 0) throw new ApiError(400, 'add at least one folder')
+  const bad = out.find((f) => !f.startsWith('/') && !f.startsWith('~/'))
+  if (bad) throw new ApiError(400, 'use a full folder path, like /Users/you/code/project')
+  if (out.length > 12) throw new ApiError(400, 'a project can have up to 12 folders')
+  return out
+}
+
+function createConversation(body: { text?: string; projectId?: string }): { id: string } {
+  const text = String(body.text ?? '').trim()
+  if (!text) throw new ApiError(400, 'the message is empty')
+  let folders: string[]
+  if (body.projectId) {
+    const p = state.projects.find((x) => x.id === body.projectId)
+    if (!p) throw new ApiError(400, 'that project no longer exists')
+    folders = p.folders
+  } else if (state.settings.folder) {
+    folders = [state.settings.folder]
+  } else {
+    throw new ApiError(400, 'no_folder')
+  }
   const id = nextId('chat-')
-  const text = body.text.trim()
   const c: ConversationDetail = {
     id,
     title: text.length > 60 ? `${text.slice(0, 57)}…` : text,
-    agent: body.agent,
+    agent: state.settings.agent,
     model: '',
-    workdir: body.workdir,
+    workdir: folders[0] as string,
+    projectId: body.projectId || undefined,
+    extraFolders: folders.slice(1),
     status: 'running',
     updatedAt: newest(),
     stepCount: 0,
@@ -130,8 +165,54 @@ function createConversation(body: { agent: AgentName; workdir: string; text: str
   }
   state.convs.unshift(c)
   emit({ type: 'conversations' })
+  emit({ type: 'projects' })
   replyLater(c, 900)
   return { id }
+}
+
+// ---- Projects and settings -------------------------------------------------------------------------------------
+
+function projectList(): Project[] {
+  return clone(
+    [...state.projects]
+      .map((p) => ({ ...p, chatCount: state.convs.filter((c) => c.projectId === p.id).length }))
+      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+  )
+}
+
+function saveProject(id: string | null, body: ProjectInput): Project {
+  const name = String(body.name ?? '').trim().replace(/\s+/g, ' ')
+  if (!name) throw new ApiError(400, 'give the project a name')
+  if (name.length > 80) throw new ApiError(400, 'use a name of 80 characters or fewer')
+  const folders = checkFolders(body.folders)
+  let p = id ? state.projects.find((x) => x.id === id) : undefined
+  if (id && !p) throw new ApiError(404, 'not_found')
+  if (!p) {
+    p = { id: nextId('pj-'), name, folders, chatCount: 0, updatedAt: now() }
+    state.projects.push(p)
+  } else {
+    Object.assign(p, { name, folders, updatedAt: now() })
+  }
+  emit({ type: 'projects' })
+  const saved = p
+  return projectList().find((x) => x.id === saved.id) as Project
+}
+
+function deleteProject(id: string): void {
+  if (!state.projects.some((p) => p.id === id)) throw new ApiError(404, 'not_found')
+  state.projects = state.projects.filter((p) => p.id !== id)
+  for (const c of state.convs) if (c.projectId === id) c.projectId = undefined
+  emit({ type: 'projects' })
+  emit({ type: 'conversations' })
+}
+
+function saveSettings(body: Partial<Settings>): Settings {
+  if (!AGENTS.some((a) => a.name === body.agent)) throw new ApiError(400, `unknown agent "${String(body.agent)}"`)
+  const folder = String(body.folder ?? '').trim()
+  if (folder) checkFolders([folder])
+  state.settings = { agent: body.agent as AgentName, folder }
+  emit({ type: 'settings' })
+  return clone(state.settings)
 }
 
 function sendMessage(id: string, text: string): void {
@@ -277,8 +358,15 @@ export async function mockRequest({ method, path, body, csrf }: MockRequest): Pr
   if (route === 'GET /api/conversations') {
     return clone([...state.convs].sort((a, c) => c.updatedAt.localeCompare(a.updatedAt)).map(summary))
   }
-  if (route === 'POST /api/conversations') {
-    return createConversation(b as { agent: AgentName; workdir: string; text: string })
+  if (route === 'POST /api/conversations') return createConversation(b as { text?: string; projectId?: string })
+  if (route === 'GET /api/settings') return clone(state.settings)
+  if (route === 'PUT /api/settings') return saveSettings(b as Partial<Settings>)
+  if (route === 'GET /api/projects') return projectList()
+  if (route === 'POST /api/projects') return saveProject(null, b as unknown as ProjectInput)
+  if ((m = path.match(/^\/api\/projects\/([^/]+)$/))) {
+    const id = decodeURIComponent(m[1] as string)
+    if (method === 'PUT') return saveProject(id, b as unknown as ProjectInput)
+    if (method === 'DELETE') return deleteProject(id)
   }
   if ((m = path.match(/^\/api\/conversations\/([^/]+)$/)) && method === 'GET') return clone(findConv(decodeURIComponent(m[1] as string)))
   if ((m = path.match(/^\/api\/conversations\/([^/]+)\/messages$/)) && method === 'POST') {

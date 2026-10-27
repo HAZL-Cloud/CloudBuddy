@@ -1,0 +1,104 @@
+/* Projects, settings, the new-chat view, and the canvas that folds away (D-054 to D-056). */
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn.link.inline{display:inline;padding:0;font:inherit;font-weight:600;vertical-align:baseline}
+.push-left{margin-right:auto}
+
+/* Sidebar: projects */
+.new-chat-in{margin-left:auto;font-size:12px;font-weight:400;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50%}
+.side-projects{display:flex;flex-direction:column;gap:6px}
+.side-head{display:flex;align-items:center;justify-content:space-between;padding-right:4px}
+.side-head .side-label{margin:0}
+.side-add{display:grid;place-items:center;width:22px;height:22px;border:0;border-radius:6px;background:none;color:var(--ink-3);cursor:pointer}
+.side-add:hover{background:var(--line-soft);color:var(--ink)}
+.projects{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1px}
+.project-row{position:relative;display:flex;align-items:center}
+.project{flex:1;min-width:0;display:flex;align-items:center;gap:8px;padding:6px 10px;border:0;border-radius:8px;background:none;text-align:left;color:var(--ink-2);cursor:pointer}
+.project:hover{background:var(--line-soft);color:var(--ink)}
+.project.on{background:var(--card);box-shadow:inset 0 0 0 1px var(--line);color:var(--ink);font-weight:500}
+.project-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-count{margin-left:auto;font:500 11px var(--f-mono);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.project-edit{position:absolute;right:4px;display:grid;place-items:center;width:24px;height:24px;border:0;border-radius:6px;background:var(--card);color:var(--ink-3);cursor:pointer;opacity:0}
+.project-row:hover .project-edit,.project-edit:focus-visible{opacity:1}
+.project-row:hover .project-count{visibility:hidden}
+.project-edit:hover{color:var(--ink)}
+@media (hover:none){.project-edit{opacity:1;background:none}.project-row .project-count{display:none}}
+.side-empty{margin:-6px 0 0;padding:0 10px;font-size:12.5px;color:var(--ink-3)}
+
+/* Chat header chips: long folder paths shorten instead of spilling out */
+.chat-meta{min-width:0}
+.meta-chip{max-width:100%;min-width:0}
+.folder-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:ltr}
+.project-chip{font-weight:500;color:var(--ink)}
+
+/* A new chat */
+.start{margin:auto 0;padding:24px 4px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}
+.start-mark{width:44px;height:44px;border-radius:12px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center}
+.start-mark .ic{width:24px;height:24px}
+.start h2{margin:0;font:700 20px/1.25 var(--f-display);letter-spacing:-.01em;text-wrap:balance}
+.start-where{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
+.start-where label{font:600 11px var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.start-where select{max-width:240px;padding:6px 28px 6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:500 13.5px var(--f-body);cursor:pointer}
+.start-where select:focus{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
+.start-folders{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;max-width:100%}
+.start-folders li{display:flex;align-items:center;gap:6px;min-width:0;font-size:12.5px;color:var(--ink-2)}
+.start-folders .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.start-here{flex:none;padding:0 6px;border-radius:999px;background:var(--line-soft);font-size:11px;color:var(--ink-3)}
+.start-note{margin:0;max-width:44ch;font-size:13px;color:var(--ink-3);line-height:1.45}
+.notice.start-note{text-align:left;color:var(--change)}
+
+/* Project dialog */
+.dialog fieldset{margin:0;padding:0;border:0;min-width:0}
+.dialog legend,.folders legend{padding:0;margin-bottom:5px;font:600 11px var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.field-help{margin:0;font-size:12.5px;color:var(--ink-3);line-height:1.45}
+.folders{gap:7px}
+.folder-row{display:flex;align-items:center;gap:6px}
+.folder-row input{flex:1;min-width:0}
+.add-folder{align-self:flex-start;padding-block:4px}
+
+/* Settings page */
+.settings-page{display:none;grid-column:2 / -1;grid-row:1;min-width:0;min-height:0;overflow:auto;background:var(--panel)}
+.app[data-page="settings"] .settings-page{display:block}
+.app[data-page="settings"] .chat,.app[data-page="settings"] .canvas-panel{display:none}
+.set-form{display:flex;flex-direction:column;gap:24px}
+.set-form fieldset{margin:0;padding:0;border:0;min-width:0}
+.set-form legend{padding:0;margin-bottom:10px}
+.conn-sec h3 label{cursor:pointer}
+.agent-choices{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.agent-choice{display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);cursor:pointer}
+.agent-choice:hover{border-color:var(--ink-3)}
+.agent-choice.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.agent-choice.off{opacity:.55;cursor:not-allowed}
+.agent-choice input{accent-color:var(--accent);margin:0}
+.agent-choice-text{display:flex;flex-direction:column;gap:2px}
+.agent-choice-text .mono{font-size:11.5px;color:var(--ink-3)}
+.set-input{width:min(640px,100%);padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:13px var(--f-mono)}
+.set-input:focus{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
+.set-project{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:14px;padding:12px 16px;border-top:1px solid var(--line-soft)}
+.set-project:first-child{border-top:0}
+.set-project-main{display:flex;flex-direction:column;gap:4px;min-width:0}
+.set-folders{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--ink-2)}
+.set-folders .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-count{font-size:12.5px;color:var(--ink-3);white-space:nowrap}
+
+/* The canvas folded to a strip. The chat takes the room and keeps a readable line length. */
+.app[data-canvas="closed"]{grid-template-columns:244px minmax(0,1fr) 44px}
+.app[data-canvas="closed"] .messages,.app[data-canvas="closed"] .chat-head{padding-inline:max(16px,calc((100% - 820px) / 2))}
+.app[data-canvas="closed"] .composer{margin-inline:max(16px,calc((100% - 820px) / 2))}
+.canvas-rail{border-left:1px solid var(--line);background:var(--panel)}
+.rail-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;padding:12px 0;border:0;background:none;color:var(--ink-2);cursor:pointer}
+.rail-btn:hover{background:var(--line-soft);color:var(--ink)}
+.rail-label{writing-mode:vertical-rl;font:700 13px var(--f-display);letter-spacing:.02em}
+.rail-count{font:600 11.5px var(--f-mono);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.rail-wait{min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--delete);color:var(--on-delete);font:600 11px/20px var(--f-body);text-align:center;animation:pulse 1.6s ease-in-out infinite}
+
+@media (max-width:1100px){
+  .settings-page{grid-column:1 / -1}
+  .app[data-canvas="closed"]{grid-template-columns:minmax(0,1fr) 44px}
+}
+@media (max-width:760px){
+  .settings-page{grid-row:2;grid-column:1}
+  .collapse-btn{display:none}
+  .set-project{grid-template-columns:minmax(0,1fr) auto}
+  .set-count{display:none}
+}

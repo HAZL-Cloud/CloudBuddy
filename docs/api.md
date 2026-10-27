@@ -77,16 +77,25 @@ type ChatItem =
 interface RunResult { title: string; line: string; at: string; }
 
 interface ConversationSummary {
-  id: string; title: string; agent: AgentName; model: string; workdir: string;
+  id: string; title: string; agent: AgentName; model: string;
+  workdir: string;             // where the agent starts
+  projectId?: string;          // missing outside a project
   status: ConvStatus; updatedAt: string; stepCount: number; waitingCount: number;
 }
 
 interface ConversationDetail extends ConversationSummary {
+  extraFolders: string[];      // the project's other folders when the chat started; the agent may change files there too
   subtitle: string;            // e.g. "4 providers · Resend, Cloudflare, Stripe, Google Cloud"
   chat: ChatItem[];
   steps: Step[];
   result?: RunResult;
 }
+
+// D-054. The first folder is where the agent starts. Folders are full paths, resolved by the server.
+interface Project { id: string; name: string; folders: string[]; chatCount: number; updatedAt: string; }
+
+// D-055. The agent for new chats, and the folder for chats outside a project ("" = not set).
+interface Settings { agent: AgentName; folder: string; }
 
 type AdapterKind = "builtin" | "generated" | "hints" | "generic";
 type Rule = "irreversible" | "live" | "every" | "readonly" | "off";
@@ -105,11 +114,17 @@ interface Connection {
 |---|---|---|---|
 | GET | `/api/session` | | `{ csrfToken, version, agents }` |
 | GET | `/api/conversations` | | `ConversationSummary[]` (newest first) |
-| POST | `/api/conversations` | `{ agent, workdir, text }` | `{ id }` (starts the first run) |
+| POST | `/api/conversations` | `{ text, projectId? }` | `{ id }` (starts the first run). The agent comes from Settings. With `projectId`, the folders are the project's; without it, the folder from Settings. `400 {"error":"no_folder"}` when there is neither. `agent` and `workdir` may also be given, to override Settings (tests); `workdir` together with `projectId` is a `400`. |
 | GET | `/api/conversations/:id` | | `ConversationDetail` |
 | POST | `/api/conversations/:id/messages` | `{ text }` | `202` (starts a run) / `409` if a run is active |
 | POST | `/api/conversations/:id/stop` | | `202` |
 | POST | `/api/approvals/:id` | `{ decision: "approve" \| "deny" }` | `200 Step` / `409 {"error":"not_pending"}` |
+| GET | `/api/settings` | | `Settings` |
+| PUT | `/api/settings` | `Settings` | `Settings` (the folder resolved) / `400` with a message for people |
+| GET | `/api/projects` | | `Project[]` (by name) |
+| POST | `/api/projects` | `{ name, folders }` | `Project` / `400` with a message for people |
+| PUT | `/api/projects/:id` | `{ name, folders }` | `Project`. Chats already in the project keep their folders. |
+| DELETE | `/api/projects/:id` | | `204`. Its chats stay, outside any project. |
 | GET | `/api/connections` | | `{ scannedAt, cli: Connection[], mcp: Connection[] }` |
 | POST | `/api/connections/scan` | | same as GET |
 | PUT | `/api/connections/:id/rule` | `{ rule }` | `Connection` |
@@ -123,11 +138,13 @@ Each SSE message is one JSON object in `data:`:
 type StreamEvent =
   | { type: "conversation"; conversationId: string }   // refetch that conversation + the list
   | { type: "conversations" }                           // refetch the list
-  | { type: "connections" };                            // refetch connections
+  | { type: "connections" }                             // refetch connections
+  | { type: "projects" }                                // refetch projects
+  | { type: "settings" };                               // refetch settings
 ```
 
 The app treats every event as "refetch this" (TanStack Query invalidation). The server sends a comment ping every 15 seconds.
 
 ## Rendering rules
-- All text from agents and tools is rendered as **plain text**. No `dangerouslySetInnerHTML`, no Markdown-to-HTML on tool output. Agent chat text may render inline code spans for text in backticks, built from React elements.
+- All text from agents and tools is rendered as **plain text**. No `dangerouslySetInnerHTML`, no Markdown-to-HTML on tool output. Agent chat messages are formatted as Markdown by CloudBuddy's own parser (`web/src/markdown.ts`), which builds React elements only: raw HTML shows as text, images show as links, and only `http:`/`https:` links become links (opened in a new tab with `rel="noopener noreferrer"`).
 - Approve/Deny buttons call `POST /api/approvals/:id`. A `409` means it was already decided or expired: refetch.

@@ -18,11 +18,13 @@ import {
 } from '../camera'
 import { prefersReducedMotion, useElementSize } from '../hooks'
 import { RESULT_ID, computeLayout, type StepFilter } from '../layout'
+import { plural } from '../format'
 import type { ConversationDetail, Decision, Step } from '../types'
 import { CanvasViewContext, type CanvasView } from './canvasContext'
 import { EDGE_TYPES, EdgeMarkers, NODE_TYPES } from './canvasNodes'
 import { ColumnRuler, LaneRail, TallyPills, ZoomControls } from './CanvasChrome'
 import { LANE_PREFIX, toFlow, type CanvasNode, type Trace } from './flowGraph'
+import { Icon } from './Icon'
 import { Inspector } from './Inspector'
 import { Scrubber } from './Scrubber'
 import type { Deciding } from './StepParts'
@@ -42,6 +44,10 @@ export interface CanvasPanelProps {
   onFocusHandled: (nonce: number) => void
   deciding: Deciding | null
   onDecide: (step: Step, decision: Decision) => void
+  /** Folded to a thin strip so the chat gets the room. The cards still arrive; they show when it opens. */
+  collapsed: boolean
+  onCollapse: () => void
+  onExpand: () => void
 }
 
 const NO_STEPS: Step[] = []
@@ -49,6 +55,7 @@ const REPLAY_MS = 1050
 const DEFAULT_ZOOM = 0.86
 
 export function CanvasPanel(props: CanvasPanelProps) {
+  if (props.collapsed) return <CanvasRail steps={props.detail?.steps ?? NO_STEPS} onExpand={props.onExpand} />
   return (
     <ReactFlowProvider>
       <CanvasInner {...props} />
@@ -56,7 +63,24 @@ export function CanvasPanel(props: CanvasPanelProps) {
   )
 }
 
-function CanvasInner({ detail, mobile, focusRequest, onFocusHandled, deciding, onDecide }: CanvasPanelProps) {
+/** The folded canvas: one button down the right edge, with the step count and anything waiting for you. */
+function CanvasRail({ steps, onExpand }: { steps: Step[]; onExpand: () => void }) {
+  const cloud = steps.filter((s) => s.kind === 'cloud').length
+  const waiting = steps.filter((s) => s.status === 'waiting').length
+  const label = `Show the canvas: ${plural(cloud, 'step')}${waiting > 0 ? `, ${waiting} waiting for you` : ''}`
+  return (
+    <section className="canvas-panel canvas-rail" aria-label="Steps canvas">
+      <button type="button" className="rail-btn" aria-label={label} title="Show the canvas" onClick={onExpand}>
+        <Icon name="panelOpen" />
+        <span className="rail-label">Steps</span>
+        <span className="rail-count">{cloud}</span>
+        {waiting > 0 && <span className="rail-wait">{waiting}</span>}
+      </button>
+    </section>
+  )
+}
+
+function CanvasInner({ detail, mobile, focusRequest, onFocusHandled, deciding, onDecide, onCollapse }: CanvasPanelProps) {
   const rf = useReactFlow()
   const frameRef = useRef<HTMLDivElement>(null)
   const size = useElementSize(frameRef)
@@ -310,6 +334,9 @@ function CanvasInner({ detail, mobile, focusRequest, onFocusHandled, deciding, o
           </button>
         </div>
         <ZoomControls onFit={fit} />
+        <button type="button" className="icon-btn collapse-btn" aria-label="Hide the canvas" title="Hide the canvas" onClick={onCollapse}>
+          <Icon name="panelClose" />
+        </button>
       </header>
       <div className="viewport" ref={frameRef} role="region" aria-label="Canvas of steps">
         <CanvasViewContext.Provider value={view}>

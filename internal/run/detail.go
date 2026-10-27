@@ -25,8 +25,8 @@ func (e *Engine) Detail(ctx context.Context, id string) (model.ConversationDetai
 	}
 	d := model.ConversationDetail{
 		ConversationSummary: model.ConversationSummary{ID: c.ID, Title: c.Title, Agent: c.Agent, Model: c.Model,
-			Workdir: c.Workdir, Status: c.Status, UpdatedAt: c.UpdatedAt},
-		Subtitle: c.Subtitle, Chat: chat, Steps: steps, Result: c.Result,
+			Workdir: c.Workdir, ProjectID: c.ProjectID, Status: c.Status, UpdatedAt: c.UpdatedAt},
+		ExtraFolders: c.ExtraFolders, Subtitle: c.Subtitle, Chat: chat, Steps: steps, Result: c.Result,
 	}
 	for i := range steps {
 		decorate(&steps[i])

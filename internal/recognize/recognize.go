@@ -45,12 +45,19 @@ type Env struct {
 	DataDir       string // CloudBuddy's own folder
 	Port          int    // CloudBuddy's port
 	Workdir       string
+	Folders       []string          // the project's other folders: inside the project, like Workdir
 	Protected     []string          // extra protected paths
 	AgentEnv      map[string]string // environment the agent was started with
 	CloudBuddyBin string
 	// Pinned maps a CLI name to the path the scanner found for it. A command
 	// that runs some other copy is treated as project code (D-029).
 	Pinned map[string]string
+}
+
+// projectFolders is the working folder and the project's other folders, in a
+// new slice the caller may append to.
+func (e Env) projectFolders() []string {
+	return append([]string{e.Workdir}, e.Folders...)
 }
 
 type Identity struct {
@@ -369,7 +376,7 @@ func pureSegment(s segment, env Env) bool {
 // project and temp folders.
 func externalFiles(segs []segment, cwd string, env Env) []string {
 	var out []string
-	roots := []string{env.Workdir, cwd, "/tmp", "/private/tmp", "/var/folders", "/private/var/folders", "/dev/null", "/dev/stdin", "/dev/stdout"}
+	roots := append(env.projectFolders(), cwd, "/tmp", "/private/tmp", "/var/folders", "/private/var/folders", "/dev/null", "/dev/stdin", "/dev/stdout")
 	for _, s := range segs {
 		for _, a := range s.Args {
 			for _, cand := range pathCandidates(a) {
@@ -1285,7 +1292,7 @@ func fileDraft(c Call, env Env) Draft {
 	default:
 		d.Action, d.ReviewedRead = model.ActionChange, false
 		for _, p := range c.Paths {
-			if !insideAny(resolve(p, c.Cwd), []string{env.Workdir, "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}) {
+			if !insideAny(resolve(p, c.Cwd), append(env.projectFolders(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders")) {
 				d.OutsideWorkdirWrite = true
 			}
 		}

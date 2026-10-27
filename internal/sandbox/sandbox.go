@@ -28,8 +28,9 @@ type Paths struct {
 	Home    string
 	Bin     string
 	Port    int
-	Workdir string // the only project folder the command may write
-	Kind    string // A: plain cloud CLI (no approval needed) | B: approved code
+	Workdir string   // the project folder the command runs in
+	Folders []string // the project's other folders: writable too
+	Kind    string   // A: plain cloud CLI (no approval needed) | B: approved code
 }
 
 // cliStateDirs are cache and token folders cloud CLIs and package managers
@@ -68,11 +69,13 @@ func real(p string) string {
 func MacProfile(p Paths) string {
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n")
-	// Writes: only the project folder, temp folders and CLI state folders.
+	// Writes: only the project folders, temp folders and CLI state folders.
 	// Later rules win, so the protected paths below are denied last.
 	b.WriteString("(deny file-write*)\n(allow file-write* (subpath \"/dev\") (subpath \"/private/tmp\") (subpath \"/private/var/folders\") (subpath \"/tmp\")")
-	if p.Workdir != "" {
-		fmt.Fprintf(&b, " (subpath %s)", quote(real(p.Workdir)))
+	for _, d := range append([]string{p.Workdir}, p.Folders...) {
+		if d != "" {
+			fmt.Fprintf(&b, " (subpath %s)", quote(real(d)))
+		}
 	}
 	for _, d := range cliStateDirs {
 		fmt.Fprintf(&b, " (subpath %s)", quote(filepath.Join(p.Home, d)))

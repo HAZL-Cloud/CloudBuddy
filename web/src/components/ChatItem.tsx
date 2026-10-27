@@ -4,6 +4,7 @@ import { ACTIONS } from '../vocab'
 import { ApprovalBlock } from './ApprovalBlock'
 import { Icon } from './Icon'
 import { InlineCode } from './InlineCode'
+import { Markdown } from './Markdown'
 import type { Deciding } from './StepParts'
 
 function StepRow({ step, onShow }: { step: Step; onShow: (id: string) => void }) {
@@ -70,9 +71,7 @@ export function ChatItem({ item, detail, agentInitials, agentLabel, startsAgentT
               {agentLabel}
             </div>
           )}
-          <p>
-            <InlineCode text={item.text} />
-          </p>
+          <Markdown text={item.text} />
         </div>
       )
     case 'steps': {

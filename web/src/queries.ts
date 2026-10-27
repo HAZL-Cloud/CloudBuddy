@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 import { keys } from './queryKeys'
-import type { AgentName, ConnectionsResponse, Decision, Rule, Step } from './types'
+import type { ConnectionsResponse, Decision, ProjectInput, Rule, Settings, Step } from './types'
 
 export function useSession() {
   return useQuery({ queryKey: keys.session, queryFn: api.session, staleTime: Infinity })
@@ -26,8 +26,49 @@ export function useConnections() {
 export function useCreateConversation() {
   const client = useQueryClient()
   return useMutation({
-    mutationFn: (input: { agent: AgentName; workdir: string; text: string }) => api.createConversation(input),
-    onSuccess: () => client.invalidateQueries({ queryKey: keys.conversations }),
+    mutationFn: (input: { text: string; projectId?: string }) => api.createConversation(input),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.conversations })
+      void client.invalidateQueries({ queryKey: keys.projects })
+    },
+  })
+}
+
+export function useSettings() {
+  return useQuery({ queryKey: keys.settings, queryFn: api.settings })
+}
+
+export function useSaveSettings() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (input: Settings) => api.saveSettings(input),
+    onSuccess: (saved) => client.setQueryData(keys.settings, saved),
+  })
+}
+
+export function useProjects() {
+  return useQuery({ queryKey: keys.projects, queryFn: api.projects })
+}
+
+/** Creates the project when there is no id, otherwise updates it. */
+export function useSaveProject() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string | null; input: ProjectInput }) =>
+      id ? api.updateProject(id, input) : api.createProject(input),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.projects }),
+  })
+}
+
+export function useDeleteProject() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteProject(id),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.projects })
+      void client.invalidateQueries({ queryKey: keys.conversations })
+      void client.invalidateQueries({ queryKey: keys.conversationsAll })
+    },
   })
 }
 

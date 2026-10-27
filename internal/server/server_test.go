@@ -376,3 +376,89 @@ func TestConnectionRuleApplies(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectsAndSettings(t *testing.T) {
+	e := newEnv(t, filepath.Join(repoRoot(), "testdata", "scenarios", "demo.json"))
+	e.signIn()
+	real := func(p string) string { r, _ := filepath.EvalSymlinks(p); return r }
+	other := t.TempDir()
+
+	st, b := e.do("GET", "/api/settings", nil, nil)
+	if st != 200 || !strings.Contains(string(b), `"agent":"claude"`) || !strings.Contains(string(b), `"folder":""`) {
+		t.Fatalf("default settings: %d %s", st, b)
+	}
+	// no folder yet and no project: the chat can't start
+	if st, b := e.do("POST", "/api/conversations", map[string]string{"text": "hi"}, nil); st != 400 || !strings.Contains(string(b), "no_folder") {
+		t.Fatalf("chat with no folder: %d %s", st, b)
+	}
+	if st, b := e.do("PUT", "/api/settings", map[string]string{"agent": "nope", "folder": e.work}, nil); st != 400 {
+		t.Fatalf("unknown agent saved: %d %s", st, b)
+	}
+	if st, _ := e.do("PUT", "/api/settings", map[string]string{"agent": "fake", "folder": e.work}, map[string]string{"X-CB-CSRF": ""}); st != 403 {
+		t.Fatalf("settings saved without the CSRF header: %d", st)
+	}
+	if st, b := e.do("PUT", "/api/settings", map[string]string{"agent": "fake", "folder": e.work}, nil); st != 200 || !strings.Contains(string(b), real(e.work)) {
+		t.Fatalf("save settings: %d %s", st, b)
+	}
+
+	// projects: folders are checked and resolved
+	if st, _ := e.do("POST", "/api/projects", map[string]any{"name": "Shop", "folders": []string{"relative/path"}}, nil); st != 400 {
+		t.Fatalf("relative folder accepted: %d", st)
+	}
+	if st, _ := e.do("POST", "/api/projects", map[string]any{"name": " ", "folders": []string{e.work}}, nil); st != 400 {
+		t.Fatalf("empty name accepted: %d", st)
+	}
+	st, b = e.do("POST", "/api/projects", map[string]any{"name": "Shop", "folders": []string{e.work, other, e.work}}, nil)
+	if st != 200 {
+		t.Fatalf("create project: %d %s", st, b)
+	}
+	var p model.Project
+	_ = json.Unmarshal(b, &p)
+	if len(p.Folders) != 2 || p.Folders[0] != real(e.work) || p.Folders[1] != real(other) {
+		t.Fatalf("project folders: %+v", p)
+	}
+
+	// a chat in the project starts in its first folder and can use the others
+	st, b = e.do("POST", "/api/conversations", map[string]string{"projectId": p.ID, "text": "Deploy the site"}, nil)
+	if st != 200 {
+		t.Fatalf("chat in project: %d %s", st, b)
+	}
+	var created struct{ ID string }
+	_ = json.Unmarshal(b, &created)
+	d := e.detail(created.ID)
+	if d.Agent != "fake" || d.ProjectID != p.ID || d.Workdir != real(e.work) || len(d.ExtraFolders) != 1 || d.ExtraFolders[0] != real(other) {
+		t.Fatalf("chat: agent=%s project=%s workdir=%s extra=%v", d.Agent, d.ProjectID, d.Workdir, d.ExtraFolders)
+	}
+	if st, _ := e.do("POST", "/api/conversations", map[string]string{"projectId": p.ID, "workdir": e.work, "text": "x"}, nil); st != 400 {
+		t.Fatalf("project and folder together accepted: %d", st)
+	}
+
+	// rename, then delete: the chat stays, outside any project
+	if st, b := e.do("PUT", "/api/projects/"+p.ID, map[string]any{"name": "Shop site", "folders": []string{e.work}}, nil); st != 200 || !strings.Contains(string(b), `"chatCount":1`) {
+		t.Fatalf("rename: %d %s", st, b)
+	}
+	if st, _ := e.do("PUT", "/api/projects/pj_missing", map[string]any{"name": "x", "folders": []string{e.work}}, nil); st != 404 {
+		t.Fatalf("update of a missing project: %d", st)
+	}
+	if st, _ := e.do("DELETE", "/api/projects/"+p.ID, nil, map[string]string{"X-CB-CSRF": ""}); st != 403 {
+		t.Fatalf("delete without the CSRF header: %d", st)
+	}
+	if st, _ := e.do("DELETE", "/api/projects/"+p.ID, nil, map[string]string{"Origin": "http://evil.example"}); st != 403 {
+		t.Fatalf("delete from another origin: %d", st)
+	}
+	if st, b := e.do("DELETE", "/api/projects/"+p.ID, nil, nil); st != 204 {
+		t.Fatalf("delete: %d %s", st, b)
+	}
+	if d := e.detail(created.ID); d.ProjectID != "" || d.Workdir != real(e.work) {
+		t.Fatalf("chat after delete: project=%s workdir=%s", d.ProjectID, d.Workdir)
+	}
+	// with no project, a new chat uses the folder from Settings
+	st, b = e.do("POST", "/api/conversations", map[string]string{"text": "Check the bucket"}, nil)
+	if st != 200 {
+		t.Fatalf("chat from settings: %d %s", st, b)
+	}
+	_ = json.Unmarshal(b, &created)
+	if d := e.detail(created.ID); d.Workdir != real(e.work) || len(d.ExtraFolders) != 0 || d.Agent != "fake" {
+		t.Fatalf("chat from settings: workdir=%s extra=%v agent=%s", d.Workdir, d.ExtraFolders, d.Agent)
+	}
+}

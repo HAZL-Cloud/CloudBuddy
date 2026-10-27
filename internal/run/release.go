@@ -53,13 +53,15 @@ func (e *Engine) Release(ctx context.Context, token, _ string) (ReleaseInfo, err
 		}
 	}
 	if rel.NetworkKind == "B" {
-		// Reserve the folder before checking the files, and keep it until
-		// cloudbuddy exec reports the command finished (D-029).
-		lk := e.workLock(r.Workdir)
-		lk.Lock()
+		// Reserve the project folders before checking the files, and keep
+		// them until cloudbuddy exec reports the command finished (D-029).
+		lks := e.workLocks(r.projectFolders())
+		for _, lk := range lks {
+			lk.Lock()
+		}
 		key := hashToken(token)
 		e.mu.Lock()
-		e.heldLocks[key] = lk
+		e.heldLocks[key] = lks
 		e.mu.Unlock()
 		go func() { // last resort if the wrapper never reports back
 			time.Sleep(2*time.Hour + 10*time.Minute) // after cloudbuddy exec's own 2-hour kill
@@ -78,7 +80,7 @@ func (e *Engine) Release(ctx context.Context, token, _ string) (ReleaseInfo, err
 		}
 	}
 	return ReleaseInfo{Command: rel.Command, Cwd: rel.Cwd, Kind: rel.NetworkKind, StepID: rel.StepID, Path: os.Getenv("PATH"),
-		Profile: sandbox.MacProfile(sandbox.Paths{DataDir: e.cfg.DataDir, Home: e.cfg.Home, Bin: e.cfg.Bin, Port: e.cfg.Port, Workdir: r.Workdir, Kind: rel.NetworkKind})}, nil
+		Profile: sandbox.MacProfile(sandbox.Paths{DataDir: e.cfg.DataDir, Home: e.cfg.Home, Bin: e.cfg.Bin, Port: e.cfg.Port, Workdir: r.Workdir, Folders: r.Folders, Kind: rel.NetworkKind})}, nil
 }
 
 // ExecFinished is called by cloudbuddy exec when the command ends.
@@ -91,10 +93,10 @@ func (e *Engine) ExecFinished(token string, exitCode int, leftovers int) {
 
 func (e *Engine) releaseHold(key string) {
 	e.mu.Lock()
-	lk := e.heldLocks[key]
+	lks := e.heldLocks[key]
 	delete(e.heldLocks, key)
 	e.mu.Unlock()
-	if lk != nil {
+	for _, lk := range lks {
 		lk.Unlock()
 	}
 }

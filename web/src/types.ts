@@ -78,6 +78,8 @@ export interface ConversationSummary {
   agent: AgentName
   model: string
   workdir: string
+  /** Missing for a chat outside any project. */
+  projectId?: string
   status: ConvStatus
   updatedAt: string
   stepCount: number
@@ -85,6 +87,8 @@ export interface ConversationSummary {
 }
 
 export interface ConversationDetail extends ConversationSummary {
+  /** The project's other folders, as they were when the chat started. */
+  extraFolders: string[]
   subtitle: string
   chat: ChatItem[]
   steps: Step[]
@@ -107,6 +111,25 @@ export interface Connection {
   supported: boolean
 }
 
+/** A name and the folders its chats work in (D-054). The first folder is where the agent starts. */
+export interface Project {
+  id: string
+  name: string
+  folders: string[]
+  chatCount: number
+  updatedAt: string
+}
+export interface ProjectInput {
+  name: string
+  folders: string[]
+}
+
+/** The agent and the folder for chats outside a project (D-055). */
+export interface Settings {
+  agent: AgentName
+  folder: string
+}
+
 export interface Session {
   csrfToken: string
   version: string
@@ -125,3 +148,5 @@ export type StreamEvent =
   | { type: 'conversation'; conversationId: string }
   | { type: 'conversations' }
   | { type: 'connections' }
+  | { type: 'projects' }
+  | { type: 'settings' }

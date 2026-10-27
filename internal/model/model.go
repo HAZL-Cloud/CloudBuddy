@@ -137,6 +137,7 @@ type ConversationSummary struct {
 	Agent        string     `json:"agent"`
 	Model        string     `json:"model"`
 	Workdir      string     `json:"workdir"`
+	ProjectID    string     `json:"projectId,omitempty"`
 	Status       ConvStatus `json:"status"`
 	UpdatedAt    time.Time  `json:"updatedAt"`
 	StepCount    int        `json:"stepCount"`
@@ -145,10 +146,28 @@ type ConversationSummary struct {
 
 type ConversationDetail struct {
 	ConversationSummary
-	Subtitle string     `json:"subtitle"`
-	Chat     []ChatItem `json:"chat"`
-	Steps    []Step     `json:"steps"`
-	Result   *RunResult `json:"result,omitempty"`
+	// ExtraFolders are the project's other folders, as they were when the chat started.
+	ExtraFolders []string   `json:"extraFolders"`
+	Subtitle     string     `json:"subtitle"`
+	Chat         []ChatItem `json:"chat"`
+	Steps        []Step     `json:"steps"`
+	Result       *RunResult `json:"result,omitempty"`
+}
+
+// Project is a name and the folders its chats work in (D-054). The first
+// folder is where the agent starts.
+type Project struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Folders   []string  `json:"folders"`
+	ChatCount int       `json:"chatCount"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// Settings are the agent and the folder for chats outside a project (D-055).
+type Settings struct {
+	Agent  string `json:"agent"`
+	Folder string `json:"folder"`
 }
 
 type Connection struct {

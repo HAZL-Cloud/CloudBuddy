@@ -1,9 +1,10 @@
 import { relativeWhen, plural } from '../format'
-import type { Agent, ConversationSummary } from '../types'
+import type { Agent, ConversationSummary, Project } from '../types'
 import { AGENT_LABELS } from '../vocab'
 import { Icon, type IconName } from './Icon'
 
 export type NavKey = 'chats' | 'approvals' | 'connections' | 'settings'
+export type Page = 'chat' | 'connections' | 'settings'
 const NAV: [NavKey, IconName, string][] = [
   ['chats', 'chat', 'Chats'],
   ['approvals', 'inbox', 'Approvals'],
@@ -12,9 +13,14 @@ const NAV: [NavKey, IconName, string][] = [
 ]
 
 export interface SidebarProps {
+  /** The chats in the chosen project, or all of them. */
   conversations: ConversationSummary[]
+  totalChats: number
+  projects: Project[]
+  /** The project the chat list is narrowed to; null for all chats. */
+  scope: string | null
   activeId: string | null
-  page: 'chat' | 'connections'
+  page: Page
   waitingTotal: number
   connectionCount: number | null
   agents: Agent[]
@@ -24,6 +30,9 @@ export interface SidebarProps {
   onOpenChat: (id: string) => void
   onNav: (key: NavKey) => void
   onNewChat: () => void
+  onScope: (projectId: string | null) => void
+  onNewProject: () => void
+  onEditProject: (project: Project) => void
   /** Only in mock mode. */
   onResetDemo?: () => void
 }
@@ -64,9 +73,52 @@ function Recent({ c, on, agent, onOpen }: { c: ConversationSummary; on: boolean;
   )
 }
 
+function Projects(p: SidebarProps) {
+  return (
+    <div className="side-projects">
+      <div className="side-head">
+        <span className="side-label" id="projects-label">
+          Projects
+        </span>
+        <button type="button" className="side-add" aria-label="New project" title="New project" onClick={p.onNewProject}>
+          <Icon name="plus" small />
+        </button>
+      </div>
+      <ul className="projects" aria-labelledby="projects-label">
+        <li className="project-row">
+          <button type="button" className={`project ${p.scope === null ? 'on' : ''}`} aria-current={p.scope === null ? 'true' : undefined} onClick={() => p.onScope(null)}>
+            <Icon name="chat" small />
+            <span className="project-name">All chats</span>
+            <span className="project-count">{p.totalChats}</span>
+          </button>
+        </li>
+        {p.projects.map((pr) => (
+          <li key={pr.id} className="project-row">
+            <button
+              type="button"
+              className={`project ${p.scope === pr.id ? 'on' : ''}`}
+              aria-current={p.scope === pr.id ? 'true' : undefined}
+              title={pr.folders.join('\n')}
+              onClick={() => p.onScope(pr.id)}
+            >
+              <Icon name="stack" small />
+              <span className="project-name">{pr.name}</span>
+              <span className="project-count">{pr.chatCount}</span>
+            </button>
+            <button type="button" className="project-edit" aria-label={`Edit ${pr.name}`} title="Edit project" onClick={() => p.onEditProject(pr)}>
+              <Icon name="pencil" small />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 export function Sidebar(p: SidebarProps) {
   const agentLabel = (name: ConversationSummary['agent']) => p.agents.find((a) => a.name === name)?.label ?? AGENT_LABELS[name]
-  const current = p.page === 'chat' ? 'chats' : 'connections'
+  const current: NavKey = p.page === 'chat' ? 'chats' : p.page
+  const scoped = p.scope ? p.projects.find((x) => x.id === p.scope) : undefined
   // `inert` is not in React 18's types, so it goes in through a spread.
   const inert = p.hidden && !p.open ? { inert: '' } : {}
   return (
@@ -78,9 +130,10 @@ export function Sidebar(p: SidebarProps) {
         <span className="brand-name">CloudBuddy</span>
         {window.location.port && <span className="brand-host">:{window.location.port}</span>}
       </div>
-      <button type="button" className="new-chat" onClick={p.onNewChat}>
+      <button type="button" className="new-chat" aria-label={scoped ? `New chat in ${scoped.name}` : undefined} onClick={p.onNewChat}>
         <Icon name="plus" />
         New chat
+        {scoped && <span className="new-chat-in">in {scoped.name}</span>}
       </button>
       <nav className="nav" aria-label="Main">
         {NAV.map(([key, icon, label]) => (
@@ -102,12 +155,14 @@ export function Sidebar(p: SidebarProps) {
           </button>
         ))}
       </nav>
-      <div className="side-label">Recent</div>
+      <Projects {...p} />
+      <div className="side-label">{scoped ? `Chats in ${scoped.name}` : 'Recent'}</div>
       <ul className="recents">
         {p.conversations.map((c) => (
           <Recent key={c.id} c={c} on={c.id === p.activeId && p.page === 'chat'} agent={agentLabel(c.agent)} onOpen={() => p.onOpenChat(c.id)} />
         ))}
       </ul>
+      {scoped && p.conversations.length === 0 && <p className="side-empty">No chats in this project yet.</p>}
       <div className="runtimes">
         <div className="side-label">Agents on this computer</div>
         {p.agents.map((a) => (

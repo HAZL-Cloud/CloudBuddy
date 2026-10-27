@@ -5,7 +5,7 @@ package bus
 import "sync"
 
 type Event struct {
-	Type           string `json:"type"` // conversation | conversations | connections
+	Type           string `json:"type"` // conversation | conversations | connections | projects | settings
 	ConversationID string `json:"conversationId,omitempty"`
 }
 

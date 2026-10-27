@@ -5,9 +5,11 @@ import type {
   ConversationDetail,
   ConversationSummary,
   Decision,
-  AgentName,
+  Project,
+  ProjectInput,
   Rule,
   Session,
+  Settings,
   Step,
 } from './types'
 
@@ -29,7 +31,7 @@ export class NotSignedInError extends ApiError {
   }
 }
 
-type Method = 'GET' | 'POST' | 'PUT'
+type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
 // The CSRF token lives in memory only (api.md). It is fetched once and sent on every non-GET request.
 let sessionRequest: Promise<Session> | null = null
@@ -103,12 +105,18 @@ export const api = {
   session: getSession,
   conversations: () => call<ConversationSummary[]>('GET', '/api/conversations'),
   conversation: (id: string) => call<ConversationDetail>('GET', `/api/conversations/${enc(id)}`),
-  createConversation: (input: { agent: AgentName; workdir: string; text: string }) =>
-    call<{ id: string }>('POST', '/api/conversations', input),
+  /** The agent comes from Settings; the folders from the project, or from Settings outside a project. */
+  createConversation: (input: { text: string; projectId?: string }) => call<{ id: string }>('POST', '/api/conversations', input),
   sendMessage: (id: string, text: string) => call<void>('POST', `/api/conversations/${enc(id)}/messages`, { text }),
   stop: (id: string) => call<void>('POST', `/api/conversations/${enc(id)}/stop`),
   decide: (approvalId: string, decision: Decision) =>
     call<Step>('POST', `/api/approvals/${enc(approvalId)}`, { decision }),
+  settings: () => call<Settings>('GET', '/api/settings'),
+  saveSettings: (input: Settings) => call<Settings>('PUT', '/api/settings', input),
+  projects: () => call<Project[]>('GET', '/api/projects'),
+  createProject: (input: ProjectInput) => call<Project>('POST', '/api/projects', input),
+  updateProject: (id: string, input: ProjectInput) => call<Project>('PUT', `/api/projects/${enc(id)}`, input),
+  deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
   connections: () => call<ConnectionsResponse>('GET', '/api/connections'),
   scanConnections: () => call<ConnectionsResponse>('POST', '/api/connections/scan'),
   setRule: (id: string, rule: Rule) => call<Connection>('PUT', `/api/connections/${enc(id)}/rule`, { rule }),

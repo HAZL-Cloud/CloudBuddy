@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +48,20 @@ func TestParseCodexFixture(t *testing.T) {
 	}
 	if unwrap := cmds[0]; unwrap == "" {
 		t.Fatal("no command text")
+	}
+}
+
+func TestCodexTurnWritesProjectFolders(t *testing.T) {
+	turn := codexTurn(StartOptions{Prompt: "hi", Workdir: "/code/app", Folders: []string{"/code/infra"}}, "th_1")
+	sp := turn["sandboxPolicy"].(map[string]any)
+	if sp["type"] != "workspaceWrite" || sp["networkAccess"] != false {
+		t.Errorf("sandbox policy: %v", sp)
+	}
+	if roots := sp["writableRoots"].([]string); len(roots) != 1 || roots[0] != "/code/infra" {
+		t.Errorf("writable roots: %v", roots)
+	}
+	b, _ := json.Marshal(codexTurn(StartOptions{Prompt: "hi"}, "th_1"))
+	if !strings.Contains(string(b), `"writableRoots":[]`) {
+		t.Errorf("no folders should send an empty list: %s", b)
 	}
 }

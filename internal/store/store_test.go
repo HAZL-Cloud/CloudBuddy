@@ -234,3 +234,62 @@ func TestLinksPointToWhereAValueFirstAppeared(t *testing.T) {
 		t.Fatalf("first producers: %+v", firsts)
 	}
 }
+
+func TestProjectsAndSettings(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if set, err := s.Settings(ctx); err != nil || set != (model.Settings{}) {
+		t.Fatalf("empty settings: %+v %v", set, err)
+	}
+	if err := s.SaveSettings(ctx, model.Settings{Agent: "codex", Folder: "/code/app"}); err != nil {
+		t.Fatal(err)
+	}
+	if set, _ := s.Settings(ctx); set.Agent != "codex" || set.Folder != "/code/app" {
+		t.Errorf("settings: %+v", set)
+	}
+
+	if err := s.SaveProject(ctx, model.Project{ID: "pj_1", Name: "Shop", Folders: []string{"/code/app", "/code/infra"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateConversation(ctx, Conversation{ID: "cv_p", Title: "t", Agent: "claude", Workdir: "/code/app",
+		ProjectID: "pj_1", ExtraFolders: []string{"/code/infra"}, Status: model.ConvIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateConversation(ctx, Conversation{ID: "cv_n", Title: "t", Agent: "claude", Workdir: "/code/app", Status: model.ConvIdle}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.GetProject(ctx, "pj_1")
+	if err != nil || p.ChatCount != 1 || len(p.Folders) != 2 || p.Folders[1] != "/code/infra" {
+		t.Fatalf("project: %+v %v", p, err)
+	}
+	c, _ := s.GetConversation(ctx, "cv_p")
+	if c.ProjectID != "pj_1" || len(c.ExtraFolders) != 1 {
+		t.Errorf("conversation: %+v", c)
+	}
+	if c, _ := s.GetConversation(ctx, "cv_n"); c.ProjectID != "" || c.ExtraFolders == nil || len(c.ExtraFolders) != 0 {
+		t.Errorf("conversation outside a project: %+v", c)
+	}
+
+	// renaming keeps the chats; the chat keeps the folders it started with
+	if err := s.SaveProject(ctx, model.Project{ID: "pj_1", Name: "Shop site", Folders: []string{"/code/app"}}); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := s.Projects(ctx); len(list) != 1 || list[0].Name != "Shop site" || list[0].ChatCount != 1 {
+		t.Errorf("projects: %+v", list)
+	}
+	if c, _ := s.GetConversation(ctx, "cv_p"); len(c.ExtraFolders) != 1 {
+		t.Errorf("editing the project changed a chat's folders: %+v", c.ExtraFolders)
+	}
+
+	// deleting the project keeps its chats, outside any project
+	if err := s.DeleteProject(ctx, "pj_1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteProject(ctx, "pj_1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("second delete: %v", err)
+	}
+	c, err = s.GetConversation(ctx, "cv_p")
+	if err != nil || c.ProjectID != "" || len(c.ExtraFolders) != 1 {
+		t.Errorf("chat after its project was deleted: %+v %v", c, err)
+	}
+}

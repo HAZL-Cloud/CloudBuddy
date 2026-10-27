@@ -97,6 +97,21 @@ func policyParams() map[string]any {
 	return map[string]any{"approvalPolicy": "on-request", "approvalsReviewer": "user"}
 }
 
+// codexTurn is one turn's parameters. The sandbox can write the working
+// folder and the project's other folders, with no network.
+func codexTurn(o StartOptions, threadID string) map[string]any {
+	turn := policyParams()
+	turn["threadId"] = threadID
+	turn["cwd"] = o.Workdir
+	roots := append([]string{}, o.Folders...)
+	turn["sandboxPolicy"] = map[string]any{"type": "workspaceWrite", "writableRoots": roots, "networkAccess": false}
+	turn["input"] = []map[string]any{{"type": "text", "text": o.Prompt}}
+	if o.Model != "" {
+		turn["model"] = o.Model
+	}
+	return turn
+}
+
 func (c *Codex) Run(ctx context.Context, o StartOptions, out chan<- Event) error {
 	home, err := c.prepareHome()
 	if err != nil {
@@ -228,14 +243,7 @@ func (c *Codex) Run(ctx context.Context, o StartOptions, out chan<- Event) error
 	}
 	out <- Event{Kind: "session", SessionID: threadID, Model: ts.Model}
 
-	turn := policyParams()
-	turn["threadId"] = threadID
-	turn["cwd"] = o.Workdir
-	turn["sandboxPolicy"] = map[string]any{"type": "workspaceWrite", "networkAccess": false}
-	turn["input"] = []map[string]any{{"type": "text", "text": o.Prompt}}
-	if o.Model != "" {
-		turn["model"] = o.Model
-	}
+	turn := codexTurn(o, threadID)
 	if os.Getenv("CB_CODEX_EFFORT") != "" {
 		turn["effort"] = os.Getenv("CB_CODEX_EFFORT")
 	}

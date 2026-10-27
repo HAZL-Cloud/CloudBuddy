@@ -51,6 +51,30 @@ func (c *Claude) Settings() map[string]any {
 	}
 }
 
+func claudeArgs(o StartOptions, settingsPath, mcpPath string) []string {
+	args := []string{"-p", o.Prompt,
+		"--output-format", "stream-json", "--verbose",
+		"--setting-sources", "",
+		"--settings", settingsPath,
+		"--permission-prompts", "none",
+		"--strict-mcp-config", "--mcp-config", mcpPath,
+		"--tools", AllowedTools,
+		"--append-system-prompt", o.Brief,
+	}
+	// One flag per folder: --add-dir takes several values, so a bare list
+	// could swallow whatever comes next.
+	for _, f := range o.Folders {
+		args = append(args, "--add-dir="+f)
+	}
+	if o.SessionID != "" {
+		args = append(args, "--resume", o.SessionID)
+	}
+	if o.Model != "" {
+		args = append(args, "--model", o.Model)
+	}
+	return args
+}
+
 func (c *Claude) Run(ctx context.Context, o StartOptions, out chan<- Event) error {
 	settingsPath := filepath.Join(o.RunDir, "claude-settings.json")
 	mcpPath := filepath.Join(o.RunDir, "claude-mcp.json")
@@ -64,22 +88,7 @@ func (c *Claude) Run(ctx context.Context, o StartOptions, out chan<- Event) erro
 	if err := writeJSON(mcpPath, map[string]any{"mcpServers": servers}); err != nil {
 		return err
 	}
-	args := []string{"-p", o.Prompt,
-		"--output-format", "stream-json", "--verbose",
-		"--setting-sources", "",
-		"--settings", settingsPath,
-		"--permission-prompts", "none",
-		"--strict-mcp-config", "--mcp-config", mcpPath,
-		"--tools", AllowedTools,
-		"--append-system-prompt", o.Brief,
-	}
-	if o.SessionID != "" {
-		args = append(args, "--resume", o.SessionID)
-	}
-	if o.Model != "" {
-		args = append(args, "--model", o.Model)
-	}
-	cmd := exec.Command("claude", args...)
+	cmd := exec.Command("claude", claudeArgs(o, settingsPath, mcpPath)...)
 	cmd.Dir = o.Workdir
 	cmd.Env = baseEnv(o.Env)
 	stderr, _ := os.Create(filepath.Join(o.RunDir, "claude.stderr"))

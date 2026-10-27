@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState, type RefObject } from 'react'
 import type { Size } from './camera'
 
 export function useMediaQuery(query: string): boolean {
@@ -36,4 +36,31 @@ export function useElementSize(ref: RefObject<HTMLElement | null>): Size {
     return () => observer.disconnect()
   }, [ref])
   return size
+}
+
+/**
+ * State remembered in this browser, such as whether the canvas is open. Storage can be missing or blocked (private
+ * windows), so every read and write is guarded and the state still works for this visit.
+ */
+export function useStoredState<T>(key: string, initial: T): [T, (value: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const raw = window.localStorage.getItem(key)
+      return raw === null ? initial : (JSON.parse(raw) as T)
+    } catch {
+      return initial
+    }
+  })
+  const set = useCallback(
+    (next: T) => {
+      setValue(next)
+      try {
+        window.localStorage.setItem(key, JSON.stringify(next))
+      } catch {
+        // Not saved; it still applies until the page is closed.
+      }
+    },
+    [key],
+  )
+  return [value, set]
 }

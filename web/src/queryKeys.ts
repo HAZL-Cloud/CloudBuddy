@@ -4,4 +4,6 @@ export const keys = {
   conversation: (id: string) => ['conversation', id] as const,
   conversationsAll: ['conversation'] as const,
   connections: ['connections'] as const,
+  projects: ['projects'] as const,
+  settings: ['settings'] as const,
 }

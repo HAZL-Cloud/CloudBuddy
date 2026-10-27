@@ -99,6 +99,8 @@ func (s *Store) migrate(ctx context.Context) error {
 
 type Conversation struct {
 	ID, Title, Agent, Model, Workdir string
+	ProjectID                        string   // "" outside a project
+	ExtraFolders                     []string // the project's other folders when the chat started
 	Status                           model.ConvStatus
 	AgentSessionID, Subtitle         string
 	Result                           *model.RunResult
@@ -106,16 +108,19 @@ type Conversation struct {
 }
 
 func (s *Store) CreateConversation(ctx context.Context, c Conversation) error {
-	_, err := s.db.Exec(ctx, `INSERT INTO conversations(id,title,agent,model,workdir,status) VALUES ($1,$2,$3,$4,$5,$6)`,
-		c.ID, c.Title, c.Agent, c.Model, c.Workdir, c.Status)
+	if c.ExtraFolders == nil {
+		c.ExtraFolders = []string{}
+	}
+	_, err := s.db.Exec(ctx, `INSERT INTO conversations(id,title,agent,model,workdir,status,project_id,extra_folders) VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8)`,
+		c.ID, c.Title, c.Agent, c.Model, c.Workdir, c.Status, c.ProjectID, c.ExtraFolders)
 	return err
 }
 
 func (s *Store) GetConversation(ctx context.Context, id string) (Conversation, error) {
 	var c Conversation
 	var result []byte
-	err := s.db.QueryRow(ctx, `SELECT id,title,agent,model,workdir,status,agent_session_id,subtitle,result,created_at,updated_at FROM conversations WHERE id=$1`, id).
-		Scan(&c.ID, &c.Title, &c.Agent, &c.Model, &c.Workdir, &c.Status, &c.AgentSessionID, &c.Subtitle, &result, &c.CreatedAt, &c.UpdatedAt)
+	err := s.db.QueryRow(ctx, `SELECT id,title,agent,model,workdir,COALESCE(project_id,''),extra_folders,status,agent_session_id,subtitle,result,created_at,updated_at FROM conversations WHERE id=$1`, id).
+		Scan(&c.ID, &c.Title, &c.Agent, &c.Model, &c.Workdir, &c.ProjectID, &c.ExtraFolders, &c.Status, &c.AgentSessionID, &c.Subtitle, &result, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -159,7 +164,7 @@ func (s *Store) Touch(ctx context.Context, id string) error {
 
 func (s *Store) ListConversations(ctx context.Context) ([]model.ConversationSummary, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT c.id,c.title,c.agent,c.model,c.workdir,c.status,c.updated_at,
+		SELECT c.id,c.title,c.agent,c.model,c.workdir,COALESCE(c.project_id,''),c.status,c.updated_at,
 		  (SELECT count(*) FROM steps st WHERE st.conversation_id=c.id AND st.doc->>'kind'='cloud'),
 		  (SELECT count(*) FROM approvals a WHERE a.conversation_id=c.id AND a.state='pending')
 		FROM conversations c ORDER BY c.updated_at DESC LIMIT 200`)
@@ -170,7 +175,7 @@ func (s *Store) ListConversations(ctx context.Context) ([]model.ConversationSumm
 	out := []model.ConversationSummary{}
 	for rows.Next() {
 		var c model.ConversationSummary
-		if err := rows.Scan(&c.ID, &c.Title, &c.Agent, &c.Model, &c.Workdir, &c.Status, &c.UpdatedAt, &c.StepCount, &c.WaitingCount); err != nil {
+		if err := rows.Scan(&c.ID, &c.Title, &c.Agent, &c.Model, &c.Workdir, &c.ProjectID, &c.Status, &c.UpdatedAt, &c.StepCount, &c.WaitingCount); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -643,4 +648,92 @@ func (s *Store) Rules(ctx context.Context) (map[string]string, error) {
 		out[id] = r
 	}
 	return out, rows.Err()
+}
+
+// ---------- projects and settings ----------
+
+const projectCols = `p.id, p.name, p.folders, p.updated_at, (SELECT count(*) FROM conversations c WHERE c.project_id=p.id)`
+
+func scanProject(row pgx.Row) (model.Project, error) {
+	var p model.Project
+	err := row.Scan(&p.ID, &p.Name, &p.Folders, &p.UpdatedAt, &p.ChatCount)
+	return p, err
+}
+
+// Projects lists every project by name.
+func (s *Store) Projects(ctx context.Context) ([]model.Project, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+projectCols+` FROM projects p ORDER BY lower(p.name), p.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.Project{}
+	for rows.Next() {
+		p, err := scanProject(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetProject(ctx context.Context, id string) (model.Project, error) {
+	p, err := scanProject(s.db.QueryRow(ctx, `SELECT `+projectCols+` FROM projects p WHERE p.id=$1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return p, ErrNotFound
+	}
+	return p, err
+}
+
+// SaveProject creates the project, or updates it when the id exists.
+func (s *Store) SaveProject(ctx context.Context, p model.Project) error {
+	_, err := s.db.Exec(ctx, `INSERT INTO projects(id,name,folders) VALUES ($1,$2,$3)
+		ON CONFLICT (id) DO UPDATE SET name=$2, folders=$3, updated_at=now()`, p.ID, p.Name, p.Folders)
+	return err
+}
+
+// DeleteProject removes the project. Its chats stay, outside any project.
+func (s *Store) DeleteProject(ctx context.Context, id string) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM projects WHERE id=$1`, id)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
+func (s *Store) Settings(ctx context.Context) (model.Settings, error) {
+	rows, err := s.db.Query(ctx, `SELECT key, value FROM settings`)
+	if err != nil {
+		return model.Settings{}, err
+	}
+	defer rows.Close()
+	var out model.Settings
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return out, err
+		}
+		switch k {
+		case "agent":
+			out.Agent = v
+		case "folder":
+			out.Folder = v
+		}
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SaveSettings(ctx context.Context, v model.Settings) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	for k, val := range map[string]string{"agent": v.Agent, "folder": v.Folder} {
+		if _, err := tx.Exec(ctx, `INSERT INTO settings(key,value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2`, k, val); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }

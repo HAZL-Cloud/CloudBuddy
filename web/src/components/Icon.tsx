@@ -36,6 +36,9 @@ const PATHS = {
   menu: <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" />,
   fit: <path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />,
   folder: <path d="M2 4.5a1 1 0 0 1 1-1h3l1.5 1.5H13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1Z" />,
+  stack: <path d="M8 2.2 14 5.3 8 8.4 2 5.3ZM2 8l6 3.1L14 8M2 10.7l6 3.1 6-3.1" />,
+  panelOpen: <path d="M2.5 3.2h11v9.6h-11ZM9.8 3.2v9.6M7.4 6.2 5.6 8l1.8 1.8" />,
+  panelClose: <path d="M2.5 3.2h11v9.6h-11ZM9.8 3.2v9.6M5.6 6.2 7.4 8 5.6 9.8" />,
   bot: (
     <>
       <rect x="2.5" y="5" width="11" height="8" rx="2" />

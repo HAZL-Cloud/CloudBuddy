@@ -76,7 +76,7 @@ func (e *Engine) toolStart(ctx context.Context, r *Run, ev agent.Event) {
 		default:
 			call = recognize.Call{Agent: "codex", Via: "tool", Tool: ev.ToolName}
 		}
-		d := recognize.Recognize(call, e.env(r.Workdir), e.adapters)
+		d := recognize.Recognize(call, e.env(r), e.adapters)
 		st, err := e.st.UpsertStep(ctx, r.ConvID, r.ID, ev.ToolKey, func(s *model.Step, isNew bool) {
 			if !isNew {
 				return
