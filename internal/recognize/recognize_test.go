@@ -191,8 +191,8 @@ func TestHTTPClient(t *testing.T) {
 	if !money {
 		t.Errorf("refund not marked Moves money: %v", d.Tags)
 	}
-	if d := sh("curl https://api.stripe.com/v1/customers", true); !d.ReviewedRead {
-		t.Errorf("GET to known API should be a reviewed read")
+	if d := sh("curl https://api.stripe.com/v1/customers", true); d.ReviewedRead {
+		t.Errorf("the generic layer must not review HTTP reads (adapters do)")
 	}
 }
 

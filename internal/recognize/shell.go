@@ -13,6 +13,7 @@ type segment struct {
 	Args       []string
 	Background bool // ran with &, nohup, setsid, disown
 	Opaque     bool // contains constructs we can't read (eval, $(...) as program, here-docs)
+	Nested     bool // came from inside sh -c '…' (the outer shell and its environment also run)
 }
 
 // splitShell breaks a command line into simple commands. It understands
@@ -196,6 +197,11 @@ func buildSegment(words []string, opaque, bg bool) segment {
 			continue
 		}
 		base := filepath.Base(w)
+		// A wrapper given by path counts only if it's a system copy; a
+		// project file named "env" or "nohup" is the program itself.
+		if (detachers[base] || wrappers[base]) && strings.Contains(w, "/") && !systemPath(w) {
+			break
+		}
 		if detachers[base] {
 			s.Background = true
 			i++
@@ -229,12 +235,18 @@ func buildSegment(words []string, opaque, bg bool) segment {
 func expand(segs []segment) []segment {
 	var out []segment
 	for _, s := range segs {
-		if isShell(s.Prog) {
+		if isShell(s.Prog) && (!strings.Contains(s.ProgPath, "/") || systemPath(s.ProgPath)) {
 			for j, a := range s.Args {
 				if (a == "-c" || a == "-lc" || a == "-ic" || a == "-cl") && j+1 < len(s.Args) {
 					inner := expand(splitShell(s.Args[j+1]))
 					for k := range inner {
 						inner[k].Background = inner[k].Background || s.Background
+						inner[k].Nested = true
+						for ek, ev := range s.Env { // the outer shell's environment applies too
+							if _, ok := inner[k].Env[ek]; !ok {
+								inner[k].Env[ek] = ev
+							}
+						}
 					}
 					out = append(out, inner...)
 					goto next
@@ -245,6 +257,17 @@ func expand(segs []segment) []segment {
 	next:
 	}
 	return out
+}
+
+// systemPath reports whether an explicit program path is an installed system
+// copy rather than something in the project.
+func systemPath(p string) bool {
+	for _, d := range []string{"/bin/", "/usr/bin/", "/usr/sbin/", "/sbin/", "/usr/local/bin/", "/opt/homebrew/bin/"} {
+		if strings.HasPrefix(p, d) && !strings.Contains(p[len(d):], "/") {
+			return true
+		}
+	}
+	return false
 }
 
 func isShell(p string) bool {
@@ -292,6 +315,48 @@ func flagValue(args []string, names ...string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// flagValues returns every value given for a flag (curl uses the last one).
+func flagValues(args []string, names ...string) []string {
+	var out []string
+	for i, a := range args {
+		for _, n := range names {
+			if a == n && i+1 < len(args) {
+				out = append(out, args[i+1])
+			} else if strings.HasPrefix(a, n+"=") {
+				out = append(out, a[len(n)+1:])
+			}
+		}
+	}
+	return out
+}
+
+// curlShortWithValue are curl's one-letter options that take a value; it
+// accepts them attached (-XDELETE) or combined after other letters (-sXPOST).
+const curlShortWithValue = "XdHuKTFoeAbcEmrwxyYzCDUPQt"
+
+// normalizeCurl splits curl's attached and combined short options so the
+// rest of the recognizer sees "-X", "DELETE" (release review).
+func normalizeCurl(args []string) []string {
+	var out []string
+	for _, a := range args {
+		if len(a) > 2 && a[0] == '-' && a[1] != '-' {
+			for i := 1; i < len(a); i++ {
+				c := a[i]
+				out = append(out, "-"+string(c))
+				if strings.IndexByte(curlShortWithValue, c) >= 0 {
+					if i+1 < len(a) {
+						out = append(out, a[i+1:])
+					}
+					break
+				}
+			}
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 func hasFlag(args []string, names ...string) bool {

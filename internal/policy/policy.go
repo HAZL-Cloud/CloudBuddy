@@ -121,10 +121,17 @@ func Decide(d recognize.Draft, ctx Context) Decision {
 		return withLoss(Decision{Verdict: Ask, Row: 12, Reason: "It uses files outside the project folder: " + strings.Join(d.ExternalFiles, ", ") + "."}, d)
 	}
 	// 12. Unknown, or only the generic layer recognized it and it isn't a reviewed read.
-	if d.Action == model.ActionUnknown || d.Opaque || (d.Generic && !isRead && onlyGeneric(d)) {
+	// Only reviewed rules run without asking (D-049): reviewed reads, and
+	// creates/changes a person checked are reversible with no money or people.
+	if d.Action == model.ActionUnknown || d.Opaque || (!isRead && !d.ReviewedChange) {
 		why := "CloudBuddy can't tell what this does."
-		if d.Generic && d.Action != model.ActionUnknown {
+		switch {
+		case d.Opaque:
+			why = "Parts of this command can't be checked (shell tricks, uploads or variables)."
+		case onlyGeneric(d) && d.Action != model.ActionUnknown:
 			why = fmt.Sprintf("No %s adapter, and it isn't clearly read-only.", d.Provider)
+		case d.Action != model.ActionUnknown:
+			why = "No reviewed rule says this change is safe to run on its own."
 		}
 		return withLoss(Decision{Verdict: Ask, Row: 12, Reason: why}, d)
 	}

@@ -150,8 +150,11 @@ func (f *adapterFile) validate() error {
 		if err := check(r.Action, append(append([]string{}, r.Tags...), r.LiveTags...)); err != nil {
 			return err
 		}
-		if r.Reviewed && r.Action != "read" {
-			return fmt.Errorf("rule %v: only reads can be reviewed", r.Match)
+		if r.Reviewed && r.Action != "read" && r.Action != "create" && r.Action != "change" {
+			return fmt.Errorf("rule %v: only reads, creates and changes can be reviewed", r.Match)
+		}
+		if r.Reviewed && r.RunsCode {
+			return fmt.Errorf("rule %v: code that runs with network can't be reviewed", r.Match)
 		}
 	}
 	for _, t := range f.MCP.Tools {
@@ -216,6 +219,8 @@ func (a *Adapters) matchShell(s segment, env Env) (Draft, bool) {
 			if d.Product == "" && len(pos) > 0 {
 				if p, ok := f.Products[pos[0]]; ok {
 					d.Product = p
+				} else if p, ok := awsProducts[pos[0]]; ok && s.Prog == "aws" {
+					d.Product = p // generated AWS file shares the hand file's names
 				} else {
 					d.Product = strings.ToUpper(pos[0][:1]) + pos[0][1:]
 				}
@@ -244,6 +249,7 @@ func (a *Adapters) matchShell(s segment, env Env) (Draft, bool) {
 				}
 			}
 			d.ReviewedRead = r.Reviewed && act == model.ActionRead
+			d.ReviewedChange = r.Reviewed && len(r.Tags) == 0 && (act == model.ActionCreate || act == model.ActionChange)
 			if r.RunsCode {
 				d.Network = "B"
 			}
@@ -325,6 +331,7 @@ func (a *Adapters) matchMCP(c Call) (Draft, bool) {
 				d.addTag(model.Tag(tg))
 			}
 			d.ReviewedRead = t.Reviewed && act == model.ActionRead
+			d.ReviewedChange = t.Reviewed && len(t.Tags) == 0 && (act == model.ActionCreate || act == model.ActionChange)
 			return d, true
 		}
 	}
@@ -359,6 +366,7 @@ func (a *Adapters) matchHTTP(host, method, p string) (Draft, bool) {
 				d.addTag(model.Tag(t))
 			}
 			d.ReviewedRead = r.Reviewed && act == model.ActionRead
+			d.ReviewedChange = r.Reviewed && len(r.Tags) == 0 && (act == model.ActionCreate || act == model.ActionChange)
 			return d, true
 		}
 	}

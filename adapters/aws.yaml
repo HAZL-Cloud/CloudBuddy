@@ -1,6 +1,8 @@
 # Hand-written AWS rules. They win over aws-generated.yaml.
 # Format: docs/adapters.md. Rules only add caution on top of the generic
-# layer (D-026); "reviewed: true" is the only way a call counts as a read.
+# layer (D-026). "reviewed: true" is the only way a call runs without asking:
+# on a read, a person checked it never changes anything; on a create/change,
+# that it is reversible and involves no money or people (D-049).
 provider: AWS
 cli: [aws]
 products: {s3: S3, s3api: S3, ec2: EC2, iam: IAM, sts: Account, cloudfront: CloudFront, lambda: Lambda, rds: RDS,
@@ -13,12 +15,11 @@ rules:
   - {match: [configure, list], action: read, reviewed: true, product: Account}
   - {match: [configure, get], action: read, reviewed: true, product: Account}
   - {match: [s3, ls], action: read, reviewed: true, title: "Listed S3"}
-  - {match: [s3, presign], action: read, reviewed: true}
-  - {match: [s3, mb], action: create, product: S3, title: "Created an S3 bucket"}
-  - {match: [s3, website], action: change, product: S3}
-  - {match: [s3, cp], action: create, title: "Copied files with S3"}
-  - {match: [s3, sync], action: create, title: "Synced files to S3"}
-  - {match: [s3, mv], action: change, loss_title: "What will happen", loss: ["Moves the files: the originals are removed"]}
+  - {match: [s3, mb], action: create, reviewed: true, product: S3, title: "Created an S3 bucket"}
+  - {match: [s3, website], action: change, reviewed: true, product: S3}
+  - {match: [s3, cp], action: create, title: "Copied files with S3", loss_title: "What will happen", loss: ["Files with the same name are replaced", "Without versioning, replaced files can't be recovered"]}
+  - {match: [s3, sync], action: create, title: "Synced files to S3", loss_title: "What will happen", loss: ["Files with the same name are replaced", "Without versioning, replaced files can't be recovered"]}
+  - {match: [s3, mv], action: delete, tags: [irreversible], loss: ["Moves the files: the originals are deleted after copying"]}
   - match: [s3, rm]
     action: delete
     tags: [irreversible]
@@ -82,7 +83,24 @@ rules:
   - {match: [ses, send-bulk-templated-email], action: send, tags: [people, irreversible]}
   - {match: [sns, publish], action: send, tags: [people, irreversible], loss: ["Every subscriber of the topic gets the message"]}
   - {match: [sns, publish-batch], action: send, tags: [people, irreversible]}
-  - {match: [lambda, invoke], action: create, runs_code: false, loss_title: "What will happen", loss: ["Runs the function, which can do anything its code does"]}
+  - {match: [lambda, invoke], action: unknown, loss_title: "What will happen", loss: ["Runs the function, which can do anything its code does"]}
+  - {match: [lambda, invoke-async], action: unknown, loss_title: "What will happen", loss: ["Runs the function, which can do anything its code does"]}
+  # Creates and changes a person reviewed: reversible, no money, no people.
+  - {match: [s3api, create-bucket], action: create, reviewed: true}
+  - {match: [s3api, put-public-access-block], action: change, reviewed: true}
+  - {match: [s3api, put-bucket-tagging], action: change, reviewed: true}
+  - {match: [s3api, put-bucket-website], action: change, reviewed: true}
+  - {match: [cloudfront, create-distribution], action: create, reviewed: true}
+  - {match: [cloudfront, create-invalidation], action: change, reviewed: true}
+  - {match: [cloudfront, create-origin-access-control], action: create, reviewed: true}
+  - {match: [sns, create-topic], action: create, reviewed: true}
+  - {match: [sqs, create-queue], action: create, reviewed: true}
+  - {match: [logs, create-log-group], action: create, reviewed: true}
+  - {match: [ec2, create-snapshot], action: create, reviewed: true}
+  - {match: [ec2, create-tags], action: change, reviewed: true}
+  - {match: [ec2, create-security-group], action: create, reviewed: true}
+  - {match: [ecr, create-repository], action: create, reviewed: true}
+  - {match: [cloudwatch, put-metric-alarm], action: create, reviewed: true}
   - {match: ["*", wait, "*"], action: read, reviewed: true}
 http:
   hosts: [amazonaws.com]

@@ -28,14 +28,14 @@ rules:
   - {match: [invoices, send_invoice], action: send, tags: [people, money]}
   - {match: [subscriptions, create], action: create, tags: [money], loss: ["Starts billing the customer"]}
   - {match: [subscriptions, cancel], action: delete, tags: [irreversible], loss: ["Ends the customer's subscription"]}
-  - {match: [prices, create], action: create, live_tags: [irreversible], loss_title: "What will happen", loss: ["A price's amount can't be changed later, only archived"]}
-  - {match: [products, create], action: create}
-  - {match: [payment_links, create], action: create}
-  - {match: [webhook_endpoints, create], action: create}
-  - {match: [customers, create], action: create}
+  - {match: [prices, create], action: create, reviewed: true, live_tags: [irreversible], loss_title: "What will happen", loss: ["A price's amount can't be changed later, only archived"]}
+  - {match: [products, create], action: create, reviewed: true}
+  - {match: [payment_links, create], action: create, reviewed: true}
+  - {match: [webhook_endpoints, create], action: create, reviewed: true}
+  - {match: [customers, create], action: create, reviewed: true}
   - {match: ["*", update], action: change}
   - {match: ["*", delete], action: delete, tags: [irreversible]}
-  - {match: [trigger, "*"], action: create, product: Test events}
+  - {match: [trigger, "*"], action: create, reviewed: true, product: Test events}
 mcp:
   servers: [stripe]
   tools:
@@ -48,6 +48,10 @@ mcp:
     - {match: "*transfer*", action: create, tags: [money, irreversible]}
     - {match: "finalize_invoice", action: change, tags: [money]}
     - {match: "cancel_*", action: delete, tags: [irreversible]}
+    - {match: "create_customer", action: create, reviewed: true}
+    - {match: "create_product", action: create, reviewed: true}
+    - {match: "create_price", action: create, reviewed: true}
+    - {match: "create_payment_link", action: create, reviewed: true}
     - {match: "create_*", action: create}
     - {match: "update_*", action: change}
 http:
@@ -62,5 +66,12 @@ http:
     - {method: POST, path: "/v1/payment_intents/*/capture", action: create, tags: [money, irreversible]}
     - {method: POST, path: "/v1/invoices/*/pay", action: create, tags: [money, irreversible]}
     - {method: POST, path: "/v1/subscriptions/*/cancel", action: delete, tags: [irreversible]}
+    - {method: POST, path: "/v1/invoices/*/finalize", action: change, tags: [money], loss: ["The invoice can't be edited afterwards and may be charged automatically"]}
+    - {method: POST, path: "/v1/invoices/*/send", action: send, tags: [people, money]}
     - {method: DELETE, path: "*", action: delete, tags: [irreversible]}
+    - {method: POST, path: "/v1/customers", action: create, reviewed: true}
+    - {method: POST, path: "/v1/products", action: create, reviewed: true}
+    - {method: POST, path: "/v1/prices", action: create, reviewed: true}
+    - {method: POST, path: "/v1/webhook_endpoints", action: create, reviewed: true}
+    - {method: POST, path: "/v1/payment_links", action: create, reviewed: true}
     - {method: POST, path: "*", action: create}

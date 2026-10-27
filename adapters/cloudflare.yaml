@@ -14,7 +14,9 @@ rules:
   - {match: [publish], action: create, runs_code: true, product: Workers}
   - {match: [dev], action: create, runs_code: true, product: Workers}
   - {match: [versions, upload], action: create, runs_code: true, product: Workers}
-  - {match: [pages, deploy], action: create, product: Pages}
+  - {match: [pages, deploy], action: create, runs_code: true, product: Pages}
+  - {match: [kv, namespace, create], action: create, reviewed: true}
+  - {match: [r2, bucket, create], action: create, reviewed: true}
   - {match: [delete], action: delete, tags: [irreversible], product: Workers, loss: ["Deletes the Worker"]}
   - {match: ["*", "*", delete], action: delete, tags: [irreversible]}
   - {match: ["*", delete], action: delete, tags: [irreversible]}

@@ -10,6 +10,10 @@ mcp:
     - {match: "get*", action: read, reviewed: true}
     - {match: "delete*", action: delete, tags: [irreversible]}
     - {match: "remove*", action: delete, tags: [irreversible]}
+    - {match: "create-domain", action: create, reviewed: true}
+    - {match: "create-audience", action: create, reviewed: true}
+    - {match: "create-contact", action: create, reviewed: true}
+    - {match: "create-broadcast", action: create, reviewed: true}
     - {match: "create*", action: create}
     - {match: "update*", action: change}
     - {match: "verify*", action: change}
@@ -20,7 +24,9 @@ http:
     - {method: POST, path: "/emails*", action: send, tags: [people, irreversible], loss: ["Delivers email to real people", "Email can't be unsent"]}
     - {method: POST, path: "/broadcasts/*/send", action: send, tags: [people, irreversible], loss: ["Sends the broadcast to everyone in the audience", "Email can't be unsent"]}
     - {method: DELETE, path: "*", action: delete, tags: [irreversible]}
-    - {method: POST, path: "/domains/*/verify", action: change}
+    - {method: POST, path: "/domains/*/verify", action: change, reviewed: true}
+    - {method: POST, path: "/domains", action: create, reviewed: true}
+    - {method: POST, path: "/audiences", action: create, reviewed: true}
     - {method: POST, path: "*", action: create}
     - {method: PATCH, path: "*", action: change}
     - {method: PUT, path: "*", action: change}

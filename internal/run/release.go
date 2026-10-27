@@ -62,7 +62,7 @@ func (e *Engine) Release(ctx context.Context, token, _ string) (ReleaseInfo, err
 		e.heldLocks[key] = lk
 		e.mu.Unlock()
 		go func() { // last resort if the wrapper never reports back
-			time.Sleep(2 * time.Hour)
+			time.Sleep(2*time.Hour + 10*time.Minute) // after cloudbuddy exec's own 2-hour kill
 			e.releaseHold(key)
 		}()
 		if rel.ExecDigest == "" || filesDigest(rel.Command, rel.Cwd) != rel.ExecDigest {

@@ -15,10 +15,13 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"cloudbuddy/internal/config"
 	"cloudbuddy/internal/gateclient"
 )
+
+const maxRuntime = 2 * time.Hour
 
 func Main(args []string) int {
 	token := ""
@@ -76,6 +79,15 @@ func Main(args []string) int {
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	code := 0
+	// Hard limit, so the folder lock is never released while code still runs
+	// (release review). The server's own fallback is longer than this.
+	timer := time.AfterFunc(maxRuntime, func() {
+		fmt.Fprintln(os.Stderr, "\n[CloudBuddy stopped this command: it ran longer than 2 hours.]")
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	})
+	defer timer.Stop()
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			code = ee.ExitCode()

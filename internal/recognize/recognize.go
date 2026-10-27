@@ -6,8 +6,11 @@ package recognize
 
 import (
 	"fmt"
+	"io/fs"
 	"net/url"
+	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -71,7 +74,10 @@ type Draft struct {
 	Generic      bool
 	GuessWord    string
 	ReviewedRead bool
-	Identity     Identity
+	// ReviewedChange: a person reviewed this exact create/change in an
+	// adapter and found it reversible, with no money or people (D-049).
+	ReviewedChange bool
+	Identity       Identity
 	// Network is "" when the call stays inside the no-network sandbox, "A" for
 	// a plain cloud CLI, HTTP client or MCP call, "B" when it runs project or
 	// third-party code with network (D-029).
@@ -110,6 +116,7 @@ func (d *Draft) by(layer string) {
 func (d *Draft) raise(a model.Action) {
 	if a.Caution() > d.Action.Caution() {
 		d.Action = a
+		d.ReviewedChange = false // the reviewed rule was about something milder
 	}
 	if a != model.ActionRead {
 		d.ReviewedRead = false
@@ -210,6 +217,7 @@ func shellDraft(c Call, env Env, adapters *Adapters) Draft {
 		d.Action, d.ReviewedRead = model.ActionUnknown, false
 	}
 	cloudSeen := false
+	allReviewed := true // every cloud part is a reviewed read or reviewed change
 	for _, s := range segs {
 		sd := segmentDraft(s, c, env, adapters)
 		if s.Background {
@@ -219,6 +227,9 @@ func shellDraft(c Call, env Env, adapters *Adapters) Draft {
 			d.Opaque = true
 		}
 		if sd.Kind == "cloud" {
+			if !sd.ReviewedRead && !sd.ReviewedChange {
+				allReviewed = false
+			}
 			if !cloudSeen {
 				// the first cloud segment names the step
 				cloudSeen = true
@@ -253,6 +264,7 @@ func shellDraft(c Call, env Env, adapters *Adapters) Draft {
 			d.Network = sd.Network
 		}
 	}
+	d.ReviewedChange = cloudSeen && allReviewed && (d.Action == model.ActionCreate || d.Action == model.ActionChange)
 	if c.Background {
 		d.Background = true
 	}
@@ -278,6 +290,7 @@ func shellDraft(c Call, env Env, adapters *Adapters) Draft {
 		d.Network = "A"
 	}
 	if d.Network == "B" {
+		d.ReviewedChange = false
 		d.Kind = "cloud"
 		if d.Provider == "Local" {
 			d.Provider, d.Product = "Unknown", "Program"
@@ -314,7 +327,23 @@ var shellBuiltins = map[string]bool{"function": true, "alias": true, "unalias": 
 	"while": true, "until": true, "do": true, "done": true, "case": true, "esac": true, "select": true,
 	"{": true, "}": true, "trap": true, "hash": true, "enable": true, "autoload": true, "zmodload": true, "setopt": true}
 
+// envAllowed are the only variables a command with network may set: they
+// choose a profile or region or change output. Anything else (LD_PRELOAD,
+// BASH_ENV, AWS_CONFIG_FILE, NODE_OPTIONS…) can load code or switch
+// accounts (release review).
+var envAllowed = map[string]bool{"AWS_PROFILE": true, "AWS_DEFAULT_PROFILE": true, "AWS_REGION": true,
+	"AWS_DEFAULT_REGION": true, "AWS_PAGER": true, "AWS_DEFAULT_OUTPUT": true, "CLOUDSDK_CORE_PROJECT": true,
+	"NO_COLOR": true, "TERM": true, "LANG": true, "LC_ALL": true, "TZ": true, "PAGER": true, "CI": true, "FORCE_COLOR": true}
+
 func pureSegment(s segment, env Env) bool {
+	for k := range s.Env {
+		if !envAllowed[k] {
+			return false
+		}
+	}
+	if s.Nested {
+		return false // a nested shell also runs its own startup and environment
+	}
 	if s.Prog == "" {
 		return true
 	}
@@ -346,12 +375,25 @@ func externalFiles(segs []segment, cwd string, env Env) []string {
 					p = filepath.Join(env.Home, p[6:])
 				}
 				if !filepath.IsAbs(p) {
-					continue // relative paths stay in the project folder unless they climb out
+					continue
 				}
 				if insideAny(resolve(p, cwd), roots) {
 					continue
 				}
 				out = append(out, cand)
+			}
+			// relative paths: follow symlinks, and look inside folders for links
+			// that point outside the project (release review)
+			if rel := strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(a, "fileb://"), "file://"), "@"); rel != "" &&
+				!filepath.IsAbs(rel) && !strings.HasPrefix(rel, "~") && !strings.Contains(rel, "://") && cwd != "" && filepath.IsAbs(cwd) {
+				full := filepath.Join(cwd, rel)
+				if fi, err := os.Lstat(full); err == nil {
+					if !insideAny(resolve(full, cwd), roots) {
+						out = append(out, a)
+					} else if fi.IsDir() && linksOutside(full, roots) {
+						out = append(out, a+" (has links outside the project)")
+					}
+				}
 			}
 			if strings.Contains(a, "../") || a == ".." {
 				// climbing out of the project: resolve and check
@@ -363,6 +405,31 @@ func externalFiles(segs []segment, cwd string, env Env) []string {
 		}
 	}
 	return dedupe(out)
+}
+
+// linksOutside walks a folder (up to 5,000 entries) for symlinks that point
+// outside the allowed roots. Too many entries counts as "can't tell".
+func linksOutside(dir string, roots []string) bool {
+	n := 0
+	found := false
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || found {
+			return filepath.SkipDir
+		}
+		n++
+		if n > 5000 {
+			found = true
+			return filepath.SkipAll
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			if t, err := filepath.EvalSymlinks(p); err != nil || !insideAny(t, roots) {
+				found = true
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	return found
 }
 
 // pathCandidates pulls file paths out of one argument: plain paths,
@@ -721,7 +788,7 @@ func genericCloud(s segment, env Env) Draft {
 		}
 	}
 	d.GuessWord = opVerb
-	d.ReviewedRead = d.Action == model.ActionRead && readVerbs[opVerb]
+	d.ReviewedRead = d.Action == model.ActionRead && readVerbs[opVerb] && !sensitiveOp.MatchString(strings.Join(pos, " "))
 	if hasFlag(s.Args, "--delete") || hasFlag(s.Args, "--force-delete") || hasFlag(s.Args, "--purge") {
 		d.raise(model.ActionDelete)
 	}
@@ -745,6 +812,10 @@ func genericCloud(s segment, env Env) Draft {
 	}
 	return d
 }
+
+// sensitiveOp names reads that mint credentials or reveal secrets: they
+// don't count as plain reads (release review).
+var sensitiveOp = regexp.MustCompile(`(?i)token|credential|password|secret|login|signed-url|presign|access-key|session`)
 
 // freeTextFlags carry prose, not operations, so their values aren't scanned
 // for warning words.
@@ -937,9 +1008,13 @@ func resourceOf(args []string) string {
 // ---------- HTTP clients ----------
 
 func httpDraft(s segment, env Env, adapters *Adapters) Draft {
+	if s.Prog == "curl" {
+		s.Args = normalizeCurl(s.Args)
+	}
 	method := ""
-	if m, ok := flagValue(s.Args, "-X", "--request", "--method"); ok {
-		method = strings.ToUpper(m)
+	methods := flagValues(s.Args, "-X", "--request", "--method")
+	if len(methods) > 0 {
+		method = strings.ToUpper(methods[len(methods)-1]) // curl uses the last one
 	} else if hasFlag(s.Args, "-d", "--data", "--data-raw", "--data-binary", "--data-urlencode", "--json", "-F", "--form", "--post-data", "--post-file") {
 		method = "POST"
 	} else if hasFlag(s.Args, "-T", "--upload-file") {
@@ -989,9 +1064,12 @@ func httpDraft(s segment, env Env, adapters *Adapters) Draft {
 	if httpTricks(s, raw) {
 		d.Opaque = true
 	}
-	// A GET to a known provider API is a reviewed read; to anywhere else it
-	// still sends data out, so it asks.
-	d.ReviewedRead = d.Action == model.ActionRead && d.Provider != "Web"
+	// The generic layer never reviews an HTTP read: some APIs change things on
+	// GET (Slack, AWS Query actions). Adapters review the ones that don't.
+	d.ReviewedRead = false
+	if len(methods) > 1 || strings.Contains(raw, "Action=") || strings.Contains(raw, "action=") {
+		d.Opaque = true // several methods, or an AWS-style Query API call
+	}
 	scanWarnings(&d, strings.Split(path, "/"))
 	if d.Action == model.ActionCreate && d.Provider != "Web" {
 		// POST to an API: what the path names decides send / money
@@ -1024,6 +1102,9 @@ func httpDraft(s segment, env Env, adapters *Adapters) Draft {
 // can change what is sent: config files, several transfers, local file
 // uploads, and variables in the URL or body (Phase 2 review).
 func httpTricks(s segment, rawURL string) bool {
+	if s.Prog == "curl" {
+		s.Args = normalizeCurl(s.Args)
+	}
 	switch s.Prog {
 	case "curl":
 		if hasFlag(s.Args, "-K", "--config", "--next", "-:", "-T", "--upload-file", "--url-query", "--variable", "--expand-url", "--expand-data") {
@@ -1161,8 +1242,8 @@ func mcpDraft(c Call, adapters *Adapters) Draft {
 		d.raise(model.ActionDelete)
 		d.addTag(model.TagIrreversible)
 	}
-	if c.Hints != nil && c.Hints.ReadOnly != nil && !*c.Hints.ReadOnly && d.Action == model.ActionRead {
-		d.raise(model.ActionUnknown) // the server says it isn't read-only
+	if c.Hints != nil && c.Hints.ReadOnly != nil && !*c.Hints.ReadOnly {
+		d.raise(model.ActionChange) // the server says it isn't read-only; this also cancels an adapter's read
 	}
 	if adapters != nil {
 		if ad, ok := adapters.matchMCP(c); ok {

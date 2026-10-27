@@ -46,7 +46,7 @@ func TestPolicyRows(t *testing.T) {
 		{"12 unknown aws verb", shell("aws ec2 batch-something --x y", true), Context{CanWrapCode: true}, Ask, 12},
 		{"12 GET to unknown host", shell("curl https://example.com", true), Context{CanWrapCode: true}, Ask, 12},
 		{"13 reviewed read", shell("aws sts get-caller-identity", true), Context{CanWrapCode: true}, Allow, 13},
-		{"13 GET known API", shell("curl https://api.stripe.com/v1/customers", true), Context{CanWrapCode: true}, Allow, 13},
+		{"12 GET without an adapter asks", shell("curl https://api.stripe.com/v1/customers", true), Context{CanWrapCode: true}, Ask, 12},
 		{"mcp read with both signals", recognize.Recognize(recognize.Call{Via: "mcp", Server: "fake", Tool: "list_items", Hints: &recognize.Hints{ReadOnly: &ro}}, env, nil), Context{CanWrapCode: true}, Allow, 13},
 		{"mcp read verb without hint asks", recognize.Recognize(recognize.Call{Via: "mcp", Server: "fake", Tool: "list_items"}, env, nil), Context{CanWrapCode: true}, Ask, 10},
 		{"mcp destructive hint", recognize.Recognize(recognize.Call{Via: "mcp", Server: "fake", Tool: "tidy_up", Hints: &recognize.Hints{Destructive: &ro}}, env, nil), Context{CanWrapCode: true}, Ask, 6},
