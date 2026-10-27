@@ -322,6 +322,8 @@ var safeTools = map[string]bool{"cd": true, "pwd": true, "echo": true, "printf":
 // shellBuiltins change what later words mean (functions, aliases, exports,
 // control flow): a command using them with network is opaque.
 var shellBuiltins = map[string]bool{"function": true, "alias": true, "unalias": true, "export": true,
+	"read": true, "mapfile": true, "readarray": true, "getopts": true, "let": true, "vared": true, "zparseopts": true,
+	"bindkey": true, "fc": true, "rehash": true, "path": true, "cdpath": true,
 	"declare": true, "typeset": true, "local": true, "readonly": true, "set": true, "unset": true, "eval": true,
 	"source": true, ".": true, "if": true, "then": true, "else": true, "elif": true, "fi": true, "for": true,
 	"while": true, "until": true, "do": true, "done": true, "case": true, "esac": true, "select": true,
@@ -353,6 +355,9 @@ func pureSegment(s segment, env Env) bool {
 	}
 	if _, ok := cloudCLIs[s.Prog]; ok {
 		return pinnedOK(s, env)
+	}
+	if s.Prog == "printf" && (hasFlag(s.Args, "-v") || anyPrefix(s.Args, "-v")) {
+		return false // printf -v writes a shell variable (PATH, …)
 	}
 	if httpClients[s.Prog] || safeTools[s.Prog] {
 		return !strings.Contains(s.ProgPath, "/") || pinnedOK(s, env)
@@ -451,6 +456,15 @@ func pathCandidates(a string) []string {
 		try(a[i+1:])
 	}
 	return out
+}
+
+func anyPrefix(args []string, p string) bool {
+	for _, a := range args {
+		if strings.HasPrefix(a, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // shellTricks finds constructs where the text CloudBuddy reads isn't what

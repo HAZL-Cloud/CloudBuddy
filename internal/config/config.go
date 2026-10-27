@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 )
 
-const Version = "0.1.0-dev"
+const Version = "0.1.0-rc1"
 
 type Config struct {
 	Port      int

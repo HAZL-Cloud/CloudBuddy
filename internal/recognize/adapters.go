@@ -306,12 +306,11 @@ func (a *Adapters) matchMCP(c Call) (Draft, bool) {
 	}
 	server := strings.ToLower(c.Server)
 	for _, f := range a.files {
-		// The server's name must start with the adapter's name as a whole
-		// word ("stripe", "stripe-mcp"); "evil-stripe-proxy" doesn't match.
+		// Exact server names only: a name that merely contains or starts
+		// with "stripe" could be any server (release review).
 		hit := false
-		first := strings.FieldsFunc(server, func(r rune) bool { return r == '-' || r == '_' || r == '.' || r == ' ' })
 		for _, s := range f.MCP.Servers {
-			if server == strings.ToLower(s) || (len(first) > 0 && first[0] == strings.ToLower(s)) {
+			if server == strings.ToLower(s) {
 				hit = true
 			}
 		}

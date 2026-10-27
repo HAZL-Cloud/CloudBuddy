@@ -85,17 +85,16 @@ rules:
   - {match: [sns, publish-batch], action: send, tags: [people, irreversible]}
   - {match: [lambda, invoke], action: unknown, loss_title: "What will happen", loss: ["Runs the function, which can do anything its code does"]}
   - {match: [lambda, invoke-async], action: unknown, loss_title: "What will happen", loss: ["Runs the function, which can do anything its code does"]}
-  # Creates and changes a person reviewed: reversible, no money, no people, and
-  # no actions that fire later on their own.
+  # Creates and changes a person reviewed: reversible, free to create, no
+  # people, no data exposure, and no actions that fire later on their own.
+  # (Not here on purpose: put-public-access-block can expose data;
+  # create-invalidation and create-snapshot cost money; put-metric-alarm acts.)
   - {match: [s3api, create-bucket], action: create, reviewed: true}
-  - {match: [s3api, put-public-access-block], action: change, reviewed: true}
   - {match: [cloudfront, create-distribution], action: create, reviewed: true}
-  - {match: [cloudfront, create-invalidation], action: change, reviewed: true}
   - {match: [cloudfront, create-origin-access-control], action: create, reviewed: true}
   - {match: [sns, create-topic], action: create, reviewed: true}
   - {match: [sqs, create-queue], action: create, reviewed: true}
   - {match: [logs, create-log-group], action: create, reviewed: true}
-  - {match: [ec2, create-snapshot], action: create, reviewed: true}
   - {match: [ec2, create-tags], action: change, reviewed: true}
   - {match: [ec2, create-security-group], action: create, reviewed: true}
   - {match: [ecr, create-repository], action: create, reviewed: true}

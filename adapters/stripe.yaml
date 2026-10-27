@@ -29,9 +29,9 @@ rules:
   - {match: [subscriptions, create], action: create, tags: [money], loss: ["Starts billing the customer"]}
   - {match: [subscriptions, cancel], action: delete, tags: [irreversible], loss: ["Ends the customer's subscription"]}
   - {match: [prices, create], action: create, tags: [irreversible], loss_title: "What will happen", loss: ["A price's amount can't be changed later, only archived"]}
-  - {match: [products, create], action: create, reviewed: true}
+  - {match: [products, create], action: create, loss: ["With default_price_data it also creates a price, which can't be changed later"]}
   - {match: [payment_links, create], action: create, reviewed: true}
-  - {match: [webhook_endpoints, create], action: create, reviewed: true}
+  - {match: [webhook_endpoints, create], action: create, loss: ["Stripe starts sending events to this URL"]}
   - {match: [customers, create], action: create, reviewed: true}
   - {match: ["*", update], action: change}
   - {match: ["*", delete], action: delete, tags: [irreversible]}
@@ -49,7 +49,7 @@ mcp:
     - {match: "finalize_invoice", action: change, tags: [money]}
     - {match: "cancel_*", action: delete, tags: [irreversible]}
     - {match: "create_customer", action: create, reviewed: true}
-    - {match: "create_product", action: create, reviewed: true}
+    - {match: "create_product", action: create}
     - {match: "create_price", action: create, tags: [irreversible]}
     - {match: "create_payment_link", action: create, reviewed: true}
     - {match: "create_*", action: create}
@@ -70,8 +70,8 @@ http:
     - {method: POST, path: "/v1/invoices/*/send", action: send, tags: [people, money]}
     - {method: DELETE, path: "*", action: delete, tags: [irreversible]}
     - {method: POST, path: "/v1/customers", action: create, reviewed: true}
-    - {method: POST, path: "/v1/products", action: create, reviewed: true}
+    - {method: POST, path: "/v1/products", action: create}
     - {method: POST, path: "/v1/prices", action: create, tags: [irreversible], loss: ["A price's amount can't be changed later, only archived"]}
-    - {method: POST, path: "/v1/webhook_endpoints", action: create, reviewed: true}
+    - {method: POST, path: "/v1/webhook_endpoints", action: create}
     - {method: POST, path: "/v1/payment_links", action: create, reviewed: true}
     - {method: POST, path: "*", action: create}

