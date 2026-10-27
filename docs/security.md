@@ -35,8 +35,12 @@ It protects against:
 8. **Project or third-party code with network asks** (install scripts, `cdk deploy`, `terraform apply`), with a warning that CloudBuddy can't see inside.
 9. A change where CloudBuddy can't tell the account asks.
 10. "Ask before every change" asks.
-11. Anything only guessed, opaque (shell tricks), or using files outside the project folder asks.
-12. Everything else (reviewed reads; recognized creates and changes) runs and shows on the canvas.
+11. Anything only guessed, opaque, or using files outside the project folder asks. That includes shell tricks, nested shells, unusual environment variables, curl config files and uploads.
+12. **Only reviewed rules run without asking:**
+    - reads that a reviewed rule or reviewed read verb covers (not ones that mint credentials or reveal secrets);
+    - creates and changes that a hand-written adapter rule marks as reviewed: reversible, no money, no people.
+
+    Everything else asks, even if CloudBuddy can name it.
 
 Approvals are **single use**. Each is tied to the exact command and the hash of the files it runs, consumed once, and cancelled if the run ends. Nothing is ever approved by waiting.
 

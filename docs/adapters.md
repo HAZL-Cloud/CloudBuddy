@@ -44,7 +44,7 @@ http:
 | `action` | `read`, `create`, `change`, `send`, `delete` or `unknown`. |
 | `tags` | Any of `irreversible` (Can't undo), `money` (Moves money), `people` (Reaches people), `live`. |
 | `live_tags` | Tags added only when the call is in live mode. |
-| `reviewed` | Only on reads. Says a person checked that this really never changes anything. **Only reviewed reads run without asking.** |
+| `reviewed` | On a read: a person checked it never changes anything. On a create or change: a person checked it is reversible and involves no money and no people. **Only reviewed rules run without asking**; anything else asks, even when the adapter names it. Not allowed on deletes, sends, `runs_code` rules, or rules with tags. |
 | `runs_code` | The command builds or runs project code with network (deploy tools). It always asks, with a warning. |
 | `product`, `title` | Text for the card. |
 | `loss`, `loss_title` | Lines for the approval card ("What will be lost" / "What will happen"). |
@@ -54,8 +54,8 @@ http:
 With the default rule ("Ask before anything I can't undo"):
 
 - **Deletes, and anything tagged `irreversible`, `money` or `people`, always ask.** So does live mode.
-- Creates and changes that an adapter recognizes run without asking and show on the canvas.
-- Anything only the generic layer recognized asks, unless it is a reviewed read.
+- Reviewed reads, and creates and changes under a reviewed rule, run without asking and show on the canvas.
+- Everything else asks: generated labels, unreviewed rules, and anything only the generic layer recognized.
 
 ## Generated adapters
 
@@ -65,7 +65,9 @@ With the default rule ("Ask before anything I can't undo"):
 go run ./tools/adaptergen -models <aws-cli>/botocore/data -version <version> -out adapters/aws-generated.yaml
 ```
 
-The generator labels an operation only when its first word is on a reviewed list (`Describe…`, `List…` and `Get…` are reads, `Delete…` and `Terminate…` are deletes, and so on). Anything else is left out, so it asks. Hand-written rules in `aws.yaml` win over generated ones.
+The generator labels an operation only when its first word is on a reviewed list (`Describe…`, `List…` and `Get…` are reads, `Delete…` and `Terminate…` are deletes, and so on). It skips reads that mint credentials or reveal secrets (`GetSessionToken`, `GetSecretValue`…). It uses botocore's own naming rule, so command names match the AWS CLI.
+
+Generated labels only describe cards: a generated read runs, but a generated create or change asks. To let a safe create run on its own, add a reviewed rule for it in `aws.yaml`. Hand-written rules win over generated ones.
 
 ## Testing an adapter
 
