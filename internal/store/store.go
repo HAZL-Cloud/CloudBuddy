@@ -393,9 +393,9 @@ func (s *Store) Chat(ctx context.Context, convID string) ([]model.ChatItem, erro
 
 type ApprovalRecord struct {
 	ID, StepID, ConversationID, RunID, LaunchEpoch, RequestKey, PayloadDigest, ExecDigest string
-	Reason, LossTitle, Warning                                                          string
-	Loss                                                                                []string
-	State                                                                               string
+	Reason, LossTitle, Warning                                                            string
+	Loss                                                                                  []string
+	State                                                                                 string
 }
 
 func (s *Store) CreateApproval(ctx context.Context, a ApprovalRecord) error {
@@ -440,6 +440,20 @@ func (s *Store) ConsumeApproval(ctx context.Context, id, runID, epoch, payloadDi
 	tag, err := s.db.Exec(ctx, `UPDATE approvals SET consumed_at=now()
 		WHERE id=$1 AND state='approved' AND consumed_at IS NULL AND run_id=$2 AND launch_epoch=$3 AND payload_digest=$4`,
 		id, runID, epoch, payloadDigest)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrNotPending
+	}
+	return nil
+}
+
+// ConsumeApprovalByID is the release step for commands that run later through
+// cloudbuddy exec; the payload was already matched when the release was made.
+func (s *Store) ConsumeApprovalByID(ctx context.Context, id, runID, epoch string) error {
+	tag, err := s.db.Exec(ctx, `UPDATE approvals SET consumed_at=now()
+		WHERE id=$1 AND state='approved' AND consumed_at IS NULL AND run_id=$2 AND launch_epoch=$3`, id, runID, epoch)
 	if err != nil {
 		return err
 	}

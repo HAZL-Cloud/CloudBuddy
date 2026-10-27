@@ -27,6 +27,7 @@ type Call struct {
 	Paths        []string       // files a file tool touches
 	Cwd          string
 	Description  string // the agent's own words for this call
+	Background   bool   // the agent asked to run it in the background
 }
 
 // Hints are MCP tool annotations. Nil means "not declared".
@@ -37,12 +38,12 @@ type Hints struct {
 
 // Env describes the machine the call runs on.
 type Env struct {
-	Home         string
-	DataDir      string // CloudBuddy's own folder
-	Port         int    // CloudBuddy's port
-	Workdir      string
-	Protected    []string          // extra protected paths
-	AgentEnv     map[string]string // environment the agent was started with
+	Home          string
+	DataDir       string // CloudBuddy's own folder
+	Port          int    // CloudBuddy's port
+	Workdir       string
+	Protected     []string          // extra protected paths
+	AgentEnv      map[string]string // environment the agent was started with
 	CloudBuddyBin string
 }
 
@@ -245,6 +246,9 @@ func shellDraft(c Call, env Env, adapters *Adapters) Draft {
 		if sd.Network > d.Network {
 			d.Network = sd.Network
 		}
+	}
+	if c.Background {
+		d.Background = true
 	}
 	if c.WantsNetwork && d.Network == "" {
 		d.Network = "B" // an unknown program asked for network
@@ -1086,3 +1090,6 @@ func dedupe(s []string) []string {
 	}
 	return out
 }
+
+// ProviderForMCP names the provider behind an MCP server name.
+func ProviderForMCP(server string) string { return mcpProvider(server) }

@@ -1,0 +1,324 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/cookiejar"
+	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"cloudbuddy/internal/agent"
+	"cloudbuddy/internal/bus"
+	"cloudbuddy/internal/config"
+	"cloudbuddy/internal/model"
+	"cloudbuddy/internal/run"
+	"cloudbuddy/internal/store"
+)
+
+type env struct {
+	t      *testing.T
+	base   string
+	srv    *Server
+	client *http.Client
+	csrf   string
+	work   string
+}
+
+func repoRoot() string {
+	_, f, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(f), "..", "..")
+}
+
+func newEnv(t *testing.T, scenario string) *env {
+	t.Helper()
+	ctx := context.Background()
+	admin := "postgres://cloudbuddy:cloudbuddy@127.0.0.1:54329/cloudbuddy?sslmode=disable"
+	conn, err := pgx.Connect(ctx, admin)
+	if err != nil {
+		t.Skipf("PostgreSQL not available: %v", err)
+	}
+	name := fmt.Sprintf("cb_srv_%d_%d", os.Getpid(), time.Now().UnixNano()%100000)
+	if _, err := conn.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		t.Fatal(err)
+	}
+	conn.Close(ctx)
+	st, err := store.Open(ctx, fmt.Sprintf("postgres://cloudbuddy:cloudbuddy@127.0.0.1:54329/%s?sslmode=disable", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := t.TempDir()
+	work := t.TempDir()
+	cfg := config.Config{Port: ln.Addr().(*net.TCPAddr).Port, DataDir: data, Home: t.TempDir(), Bin: "/usr/local/bin/cloudbuddy",
+		Epoch: config.Random(8), GateToken: config.Random(24)}
+	b := bus.New()
+	eng := run.New(cfg, st, b, nil)
+	eng.UseFake(&agent.Fake{Scenario: scenario, Delay: 5 * time.Millisecond})
+	srv := New(cfg, eng, b, nil, func() []Agent { return nil }, nil)
+	hs := &http.Server{Handler: srv.Handler()}
+	go hs.Serve(ln)
+	t.Cleanup(func() {
+		hs.Close()
+		st.Close()
+		c, err := pgx.Connect(ctx, admin)
+		if err == nil {
+			_, _ = c.Exec(ctx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
+			c.Close(ctx)
+		}
+	})
+	jar, _ := cookiejar.New(nil)
+	e := &env{t: t, base: fmt.Sprintf("http://127.0.0.1:%d", cfg.Port), srv: srv, work: work,
+		client: &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return e
+}
+
+func (e *env) do(method, path string, body any, hdr map[string]string) (int, []byte) {
+	var r io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		r = strings.NewReader(string(b))
+	}
+	req, _ := http.NewRequest(method, e.base+path, r)
+	req.Header.Set("Content-Type", "application/json")
+	if method != "GET" {
+		req.Header.Set("Origin", e.base)
+		req.Header.Set("X-CB-CSRF", e.csrf)
+	}
+	for k, v := range hdr {
+		if v == "" {
+			req.Header.Del(k)
+		} else {
+			req.Header.Set(k, v)
+		}
+	}
+	resp, err := e.client.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, b
+}
+
+func (e *env) signIn() {
+	code := e.srv.NewLaunchCode()
+	st, _ := e.do("GET", "/launch/"+code, nil, nil)
+	if st != http.StatusFound {
+		e.t.Fatalf("launch: %d", st)
+	}
+	st, b := e.do("GET", "/api/session", nil, nil)
+	if st != 200 {
+		e.t.Fatalf("session: %d %s", st, b)
+	}
+	var s struct{ CsrfToken string }
+	_ = json.Unmarshal(b, &s)
+	e.csrf = s.CsrfToken
+}
+
+func (e *env) detail(id string) model.ConversationDetail {
+	_, b := e.do("GET", "/api/conversations/"+id, nil, nil)
+	var d model.ConversationDetail
+	if err := json.Unmarshal(b, &d); err != nil {
+		e.t.Fatalf("detail: %v %s", err, b)
+	}
+	return d
+}
+
+// waitFor polls until f returns true.
+func (e *env) waitFor(id string, what string, f func(model.ConversationDetail) bool) model.ConversationDetail {
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		d := e.detail(id)
+		if f(d) {
+			return d
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	d := e.detail(id)
+	b, _ := json.MarshalIndent(d.Steps, "", " ")
+	e.t.Fatalf("timed out waiting for %s; status=%s steps=%s", what, d.Status, b)
+	return d
+}
+
+func waiting(d model.ConversationDetail) *model.Step {
+	for i := range d.Steps {
+		if d.Steps[i].Status == model.StatusWaiting && d.Steps[i].Approval != nil && d.Steps[i].Approval.State == "pending" {
+			return &d.Steps[i]
+		}
+	}
+	return nil
+}
+
+func TestDemoRunEndToEnd(t *testing.T) {
+	e := newEnv(t, filepath.Join(repoRoot(), "testdata", "scenarios", "demo.json"))
+	e.signIn()
+	st, b := e.do("POST", "/api/conversations", map[string]string{"agent": "fake", "workdir": e.work, "text": "Deploy the site and clean up"}, nil)
+	if st != 200 {
+		t.Fatalf("create: %d %s", st, b)
+	}
+	var created struct{ ID string }
+	_ = json.Unmarshal(b, &created)
+	id := created.ID
+
+	answers := map[string]string{
+		"aws s3api create-bucket": "approve",
+		"aws s3 sync":             "approve",
+		"aws cloudfront create":   "approve",
+		"aws s3 rb":               "deny",
+		"stripe prices create":    "approve",
+		"curl -s https://api.stripe.com/v1/prices/price_1QxR8sKj2LmN7pQ": "approve",
+	}
+	seen := map[string]bool{}
+	for {
+		d := e.waitFor(id, "a waiting step or the end", func(d model.ConversationDetail) bool {
+			return waiting(d) != nil || d.Status == model.ConvDone || d.Status == model.ConvFailed
+		})
+		w := waiting(d)
+		if w == nil {
+			break
+		}
+		decision := ""
+		for prefix, ans := range answers {
+			if strings.HasPrefix(w.Command, prefix) || strings.Contains(w.Command, prefix) {
+				decision = ans
+			}
+		}
+		if decision == "" {
+			t.Fatalf("unexpected approval for %q (%s)", w.Command, w.Approval.Reason)
+		}
+		seen[w.Command] = true
+		st, b := e.do("POST", "/api/approvals/"+w.Approval.ID, map[string]string{"decision": decision}, nil)
+		if st != 200 {
+			t.Fatalf("decide %s: %d %s", w.Command, st, b)
+		}
+		// a second answer to the same approval is refused
+		if st, _ := e.do("POST", "/api/approvals/"+w.Approval.ID, map[string]string{"decision": "approve"}, nil); st != 409 {
+			t.Fatalf("second decision accepted: %d", st)
+		}
+	}
+	if len(seen) != 6 {
+		t.Fatalf("expected 6 approvals, saw %d: %v", len(seen), seen)
+	}
+	d := e.detail(id)
+	if d.Status != model.ConvDone {
+		t.Fatalf("status %s", d.Status)
+	}
+	for _, s := range d.Steps {
+		t.Logf("step %d %-6s %-8s %-9s %-40.40s row-reason=%v", s.Seq, s.Kind, s.Action, s.Status, s.Command, s.Approval != nil)
+	}
+	byCmd := map[string]model.Step{}
+	for _, s := range d.Steps {
+		byCmd[s.Command] = s
+	}
+	check := func(prefix string, kind string, status model.StepStatus) model.Step {
+		for c, s := range byCmd {
+			if strings.HasPrefix(c, prefix) {
+				if s.Kind != kind || s.Status != status {
+					t.Errorf("%s: kind=%s status=%s, want %s %s", prefix, s.Kind, s.Status, kind, status)
+				}
+				return s
+			}
+		}
+		t.Errorf("no step for %s", prefix)
+		return model.Step{}
+	}
+	check("aws sts get-caller-identity", "cloud", model.StatusDone)
+	check("npm run build", "local", model.StatusDone)
+	check("aws s3 rb", "cloud", model.StatusDenied)
+	price := check("stripe prices create", "cloud", model.StatusDone)
+	hasLive := false
+	for _, tg := range price.Tags {
+		if tg == model.TagLive {
+			hasLive = true
+		}
+	}
+	if !hasLive {
+		t.Errorf("live price not tagged Live: %v", price.Tags)
+	}
+	curl := check("curl -s https://api.stripe.com", "cloud", model.StatusDone)
+	if strings.Contains(curl.Command, "sk_live_51Hx9EXAMPLE") {
+		t.Errorf("secret not masked in command: %s", curl.Command)
+	}
+	if len(curl.Uses) == 0 || curl.Uses[0].FromStepID != price.ID {
+		t.Errorf("value link from the price step missing: %+v", curl.Uses)
+	}
+	if d.Result == nil || !strings.Contains(d.Result.Line, "stopped by you") {
+		t.Errorf("result: %+v", d.Result)
+	}
+	if !strings.Contains(d.Subtitle, "AWS") || !strings.Contains(d.Subtitle, "Stripe") {
+		t.Errorf("subtitle: %q", d.Subtitle)
+	}
+	// chat has the user message, agent text, step groups and approvals
+	types := map[string]int{}
+	for _, c := range d.Chat {
+		types[c.Type]++
+	}
+	if types["user"] != 1 || types["agent"] < 2 || types["steps"] < 1 || types["approval"] < 5 {
+		t.Errorf("chat items: %v", types)
+	}
+}
+
+func TestLocalSecurity(t *testing.T) {
+	e := newEnv(t, filepath.Join(repoRoot(), "testdata", "scenarios", "demo.json"))
+	// no cookie
+	if st, _ := e.do("GET", "/api/conversations", nil, nil); st != 401 {
+		t.Errorf("no cookie: %d", st)
+	}
+	// launch code works once
+	code := e.srv.NewLaunchCode()
+	if st, _ := e.do("GET", "/launch/"+code, nil, nil); st != 302 {
+		t.Errorf("launch: %d", st)
+	}
+	if st, _ := e.do("GET", "/launch/"+code, nil, nil); st != 403 {
+		t.Errorf("launch code reused: %d", st)
+	}
+	e.signIn()
+	// wrong Host (DNS rebinding)
+	req, _ := http.NewRequest("GET", e.base+"/api/conversations", nil)
+	req.Host = "evil.example.com"
+	resp, _ := e.client.Do(req)
+	if resp.StatusCode != http.StatusMisdirectedRequest {
+		t.Errorf("wrong host: %d", resp.StatusCode)
+	}
+	// cross-origin POST, missing Origin, bad CSRF
+	body := map[string]string{"decision": "approve"}
+	if st, _ := e.do("POST", "/api/approvals/x", body, map[string]string{"Origin": "https://evil.example.com"}); st != 403 {
+		t.Errorf("cross-origin post: %d", st)
+	}
+	if st, _ := e.do("POST", "/api/approvals/x", body, map[string]string{"Origin": ""}); st != 403 {
+		t.Errorf("post without origin: %d", st)
+	}
+	if st, _ := e.do("POST", "/api/approvals/x", body, map[string]string{"X-CB-CSRF": "wrong"}); st != 403 {
+		t.Errorf("bad csrf: %d", st)
+	}
+	// gate endpoints need the gate secret, and the browser session isn't it
+	if st, _ := e.do("POST", "/gate/release", map[string]string{"token": "x"}, nil); st != 403 {
+		t.Errorf("gate without secret: %d", st)
+	}
+	// no CORS headers
+	_, _ = e.do("GET", "/api/session", nil, nil)
+	req, _ = http.NewRequest("OPTIONS", e.base+"/api/session", nil)
+	req.Header.Set("Origin", "https://evil.example.com")
+	resp, _ = e.client.Do(req)
+	if resp.Header.Get("Access-Control-Allow-Origin") != "" {
+		t.Errorf("CORS header sent")
+	}
+	if !strings.Contains(resp.Header.Get("Content-Security-Policy"), "default-src 'self'") {
+		t.Errorf("no CSP")
+	}
+	_ = url.URL{}
+}

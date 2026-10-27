@@ -84,15 +84,15 @@ func TestOpaqueConstructs(t *testing.T) {
 
 func TestAWSOperations(t *testing.T) {
 	cases := map[string]model.Action{
-		"aws ec2 describe-instances":                       model.ActionRead,
-		"aws s3api list-buckets":                           model.ActionRead,
-		"aws s3api create-bucket --bucket b":               model.ActionCreate,
-		"aws s3api put-bucket-policy --bucket b":           model.ActionCreate,
+		"aws ec2 describe-instances":                        model.ActionRead,
+		"aws s3api list-buckets":                            model.ActionRead,
+		"aws s3api create-bucket --bucket b":                model.ActionCreate,
+		"aws s3api put-bucket-policy --bucket b":            model.ActionCreate,
 		"aws ec2 modify-instance-attribute --instance-id i": model.ActionChange,
-		"aws ec2 terminate-instances --instance-ids i-1":   model.ActionDelete,
-		"aws s3 rm s3://b/k":                               model.ActionDelete,
-		"aws s3 sync ./dist s3://b --delete":               model.ActionDelete,
-		"aws ec2 batch-thing":                              model.ActionUnknown,
+		"aws ec2 terminate-instances --instance-ids i-1":    model.ActionDelete,
+		"aws s3 rm s3://b/k":                                model.ActionDelete,
+		"aws s3 sync ./dist s3://b --delete":                model.ActionDelete,
+		"aws ec2 batch-thing":                               model.ActionUnknown,
 	}
 	for cmd, want := range cases {
 		if d := sh(cmd, true); d.Action != want {
