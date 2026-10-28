@@ -5,6 +5,7 @@ import type { Agent, AgentName, ConversationDetail, Decision, Project, Settings,
 import { AGENT_LABELS } from '../vocab'
 import { ChatItem } from './ChatItem'
 import { Icon } from './Icon'
+import { Logo } from './Logo'
 import type { Deciding } from './StepParts'
 import { useToast } from './Toast'
 
@@ -218,9 +219,7 @@ function NewChat({ draft, projects, settings, agents, onDraftProject, onNewProje
     <>
       <div className="messages">
         <div className="start">
-          <span className="start-mark">
-            <Icon name="cloud" />
-          </span>
+          <Logo className="start-mark" />
           <h2>What should {label} do?</h2>
           <div className="start-where">
             <label htmlFor="nc-project">Project</label>

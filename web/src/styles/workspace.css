@@ -33,8 +33,7 @@
 
 /* A new chat */
 .start{margin:auto 0;padding:24px 4px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}
-.start-mark{width:44px;height:44px;border-radius:12px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center}
-.start-mark .ic{width:24px;height:24px}
+.start-mark{display:block;width:44px;height:44px;flex:none}
 .start h2{margin:0;font:700 20px/1.25 var(--f-display);letter-spacing:-.01em;text-wrap:balance}
 .start-where{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
 .start-where label{font:600 11px var(--f-body);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}

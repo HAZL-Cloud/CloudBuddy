@@ -2,6 +2,7 @@ import { relativeWhen, plural } from '../format'
 import type { Agent, ConversationSummary, Project } from '../types'
 import { AGENT_LABELS } from '../vocab'
 import { Icon, type IconName } from './Icon'
+import { Logo, Wordmark } from './Logo'
 
 export type NavKey = 'chats' | 'approvals' | 'connections' | 'settings'
 export type Page = 'chat' | 'connections' | 'settings'
@@ -124,10 +125,10 @@ export function Sidebar(p: SidebarProps) {
   return (
     <aside className="sidebar" aria-label="Navigation" {...inert}>
       <div className="brand">
-        <span className="brand-mark">
-          <Icon name="cloud" />
+        <Logo className="brand-mark" />
+        <span className="brand-name">
+          <Wordmark />
         </span>
-        <span className="brand-name">CloudBuddy</span>
         {window.location.port && <span className="brand-host">:{window.location.port}</span>}
       </div>
       <button type="button" className="new-chat" aria-label={scoped ? `New chat in ${scoped.name}` : undefined} onClick={p.onNewChat}>
