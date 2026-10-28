@@ -6,33 +6,20 @@ import '@fontsource/ibm-plex-sans/latin-600.css'
 import '@fontsource/ibm-plex-mono/latin-400.css'
 import '@fontsource/ibm-plex-mono/latin-500.css'
 import '@fontsource/ibm-plex-mono/latin-600.css'
-import '@xyflow/react/dist/base.css'
-import './styles/tokens.css'
-import './styles/base.css'
-import './styles/sidebar.css'
-import './styles/chat.css'
-import './styles/markdown.css'
-import './styles/canvas.css'
-import './styles/connections.css'
-import './styles/extras.css'
-import './styles/workspace.css'
-import './styles/responsive.css'
 
-import { QueryClientProvider } from '@tanstack/react-query'
-import { StrictMode } from 'react'
+import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
-import { App } from './App'
-import { ToastProvider } from './components/Toast'
-import { makeQueryClient } from './queryClient'
+import { isAppPath } from './route'
 
-const client = makeQueryClient()
+// Each page loads only its own code and styles: the landing page at /, the app at /app.
+const Page = lazy(() =>
+  isAppPath(window.location.pathname) ? import('./AppRoot') : import('./landing/Landing').then((m) => ({ default: m.Landing })),
+)
 
 createRoot(document.getElementById('root') as HTMLElement).render(
   <StrictMode>
-    <QueryClientProvider client={client}>
-      <ToastProvider>
-        <App />
-      </ToastProvider>
-    </QueryClientProvider>
+    <Suspense fallback={null}>
+      <Page />
+    </Suspense>
   </StrictMode>,
 )

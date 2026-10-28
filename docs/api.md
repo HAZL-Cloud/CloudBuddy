@@ -6,7 +6,7 @@ All JSON. Times are RFC 3339 strings. IDs are strings.
 ## Access
 
 - The server listens on `127.0.0.1:7420`.
-- On start it opens the browser at `http://127.0.0.1:7420/launch/<one-time code>`. That URL sets an HttpOnly, `SameSite=Strict` session cookie (`cb_session`) and redirects to `/`. The code works once and expires after 60 seconds.
+- On start it opens the browser at `http://127.0.0.1:7420/launch/<one-time code>`. That URL sets an HttpOnly, `SameSite=Strict` session cookie (`cb_session`) and redirects to `/`, the landing page. The app itself is at `/app` (D-060); any other path serves the same `index.html`, and the page picks what to show from the path. The code works once and expires after 60 seconds.
 - `GET /api/session` (cookie required) returns `{ csrfToken, version, agents: Agent[] }`. The app keeps `csrfToken` in memory only.
 - Every non-GET request must send header `X-CB-CSRF: <csrfToken>` and a matching `Origin`.
 - Without a valid cookie every `/api` call returns `401 {"error":"not_signed_in"}`. The app then shows: "Open CloudBuddy from the link it printed in your terminal."
