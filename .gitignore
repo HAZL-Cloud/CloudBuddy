@@ -18,3 +18,8 @@ coverage.out
 .idea/
 .vscode/
 /spikes/run/
+
+# promo video: filmed frames, renders and browser profiles (rebuild with promo/README.md)
+/promo/footage/
+/promo/out/
+/promo/.chrome-*/
