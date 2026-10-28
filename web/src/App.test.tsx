@@ -41,6 +41,24 @@ describe('the sidebar', () => {
     expect(nav.getByText('0.163.0')).toBeInTheDocument()
   })
 
+  it('switches between light, dark and the computer setting, and remembers the choice', async () => {
+    renderWithProviders(<App />)
+    const theme = within(await screen.findByRole('group', { name: 'Theme' }))
+    expect(theme.getByRole('button', { name: 'Match this computer' })).toHaveAttribute('aria-pressed', 'true')
+    expect(document.documentElement.dataset.theme).toBeUndefined()
+
+    await userEvent.click(theme.getByRole('button', { name: 'Dark' }))
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(theme.getByRole('button', { name: 'Dark' })).toHaveAttribute('aria-pressed', 'true')
+    expect(window.localStorage.getItem('cloudbuddy.theme')).toBe('"dark"')
+
+    await userEvent.click(theme.getByRole('button', { name: 'Light' }))
+    expect(document.documentElement.dataset.theme).toBe('light')
+
+    await userEvent.click(theme.getByRole('button', { name: 'Match this computer' }))
+    expect(document.documentElement.dataset.theme).toBeUndefined()
+  })
+
   it('opens another chat', async () => {
     await openApp()
     await userEvent.click(within(sidebar()).getByText('Remove unused EC2 test servers'))

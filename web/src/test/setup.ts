@@ -9,6 +9,7 @@ afterEach(() => cleanup())
 // Every test starts from the seeded mock server with no waiting delays.
 beforeEach(() => {
   window.localStorage.clear()
+  delete document.documentElement.dataset.theme
   resetApiForTests()
   resetMock()
   configureMock({ speed: 0, signedIn: true })

@@ -24,6 +24,7 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     env: { VITE_MOCK: '1' },
-    css: false,
+    // Off, except tokens.css, which theme.test.ts reads as text.
+    css: { include: [/styles\/tokens\.css/] },
   },
 })

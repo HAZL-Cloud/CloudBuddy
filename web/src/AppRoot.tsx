@@ -14,8 +14,11 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { App } from './App'
 import { ToastProvider } from './components/Toast'
 import { makeQueryClient } from './queryClient'
+import { applyTheme, storedTheme } from './theme'
 
 const client = makeQueryClient()
+// Before the first render, so a dark choice never shows a light frame.
+applyTheme(storedTheme())
 
 // The app at /app, with its own styles, so the landing page never loads them.
 export default function AppRoot() {

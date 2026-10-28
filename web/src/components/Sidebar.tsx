@@ -1,4 +1,5 @@
 import { relativeWhen, plural } from '../format'
+import type { Theme } from '../theme'
 import type { Agent, ConversationSummary, Project } from '../types'
 import { AGENT_LABELS } from '../vocab'
 import { Icon, type IconName } from './Icon'
@@ -11,6 +12,11 @@ const NAV: [NavKey, IconName, string][] = [
   ['approvals', 'inbox', 'Approvals'],
   ['connections', 'plug', 'Connections'],
   ['settings', 'gear', 'Settings'],
+]
+const THEMES: [Theme, IconName, string][] = [
+  ['system', 'monitor', 'Match this computer'],
+  ['light', 'sun', 'Light'],
+  ['dark', 'moon', 'Dark'],
 ]
 
 export interface SidebarProps {
@@ -25,6 +31,8 @@ export interface SidebarProps {
   waitingTotal: number
   connectionCount: number | null
   agents: Agent[]
+  theme: Theme
+  onTheme: (theme: Theme) => void
   /** A narrow screen shows the sidebar as a drawer. While it is closed nothing in it can be tabbed to. */
   hidden: boolean
   open: boolean
@@ -173,6 +181,24 @@ export function Sidebar(p: SidebarProps) {
             <span className="mono">{a.available ? a.version : 'not found'}</span>
           </div>
         ))}
+        <div className="theme-row">
+          <span id="theme-label">Theme</span>
+          <div className="seg" role="group" aria-labelledby="theme-label">
+            {THEMES.map(([key, icon, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={p.theme === key ? 'on' : ''}
+                aria-pressed={p.theme === key}
+                aria-label={label}
+                title={label}
+                onClick={() => p.onTheme(key)}
+              >
+                <Icon name={icon} small />
+              </button>
+            ))}
+          </div>
+        </div>
         {p.onResetDemo && (
           <button type="button" className="reset" onClick={p.onResetDemo}>
             <Icon name="reset" small />

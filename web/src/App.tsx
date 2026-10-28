@@ -15,6 +15,7 @@ import { useToast } from './components/Toast'
 import { useMediaQuery, useStoredState } from './hooks'
 import { useConnections, useConversation, useConversations, useDecide, useProjects, useSession, useSettings } from './queries'
 import { connectStream } from './stream'
+import { applyTheme, THEME_KEY, type Theme } from './theme'
 import type { ConversationSummary, Decision, Project, Step } from './types'
 
 const NO_CONVERSATIONS: ConversationSummary[] = []
@@ -45,10 +46,13 @@ function Shell() {
   const [editing, setEditing] = useState<{ project: Project | null } | null>(null)
   const [storedScope, setScope] = useStoredState<string | null>('cloudbuddy.project', null)
   const [canvasOpen, setCanvasOpen] = useStoredState('cloudbuddy.canvasOpen', true)
+  const [storedChoice, setTheme] = useStoredState<Theme>(THEME_KEY, 'system')
+  const theme: Theme = storedChoice === 'light' || storedChoice === 'dark' ? storedChoice : 'system'
   const [focus, setFocus] = useState<FocusRequest | null>(null)
   const nonce = useRef(0)
 
   useEffect(() => connectStream(client), [client])
+  useEffect(() => applyTheme(theme), [theme])
 
   const conversations = list.data ?? NO_CONVERSATIONS
   const projects = projectsQuery.data ?? NO_PROJECTS
@@ -200,6 +204,8 @@ function Shell() {
         waitingTotal={waitingTotal}
         connectionCount={connections.data ? connections.data.cli.length + connections.data.mcp.length : null}
         agents={agents}
+        theme={theme}
+        onTheme={setTheme}
         hidden={narrow}
         open={navOpen}
         onOpenChat={openChat}
