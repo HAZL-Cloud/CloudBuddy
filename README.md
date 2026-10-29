@@ -86,7 +86,6 @@ cd web && npm run dev                                 # UI on :5173 (or npm run 
 make test                                             # Go and frontend tests
 ```
 
-- `plan_and_track.md`: the plan, every decision, and the work log.
 - `docs/api.md`: the HTTP API between server and browser.
 - `spikes/`: the Phase 0 experiments that proved the agent integration.
 
