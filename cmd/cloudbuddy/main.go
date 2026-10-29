@@ -3,6 +3,7 @@
 //	cloudbuddy [serve]        start the local web app (default)
 //	cloudbuddy hook           Claude Code PreToolUse hook (started by Claude Code)
 //	cloudbuddy exec           run one gate-released command (started by Claude Code)
+//	cloudbuddy shim <cli>     stand in for a cloud CLI inside a command (D-065)
 //	cloudbuddy mcp-gateway    MCP proxy in front of one server (started by an agent)
 //	cloudbuddy version
 package main
@@ -36,6 +37,8 @@ import (
 	"cloudbuddy/internal/recognize"
 	"cloudbuddy/internal/run"
 	"cloudbuddy/internal/server"
+	"cloudbuddy/internal/shellenv"
+	"cloudbuddy/internal/shim"
 	"cloudbuddy/internal/store"
 	"cloudbuddy/web"
 )
@@ -53,6 +56,8 @@ func main() {
 		os.Exit(hookcmd.Main(args))
 	case "exec":
 		os.Exit(execwrap.Main(args))
+	case "shim":
+		os.Exit(shim.Main(args))
 	case "mcp-gateway":
 		os.Exit(mcpgw.Main(args))
 	case "version":
@@ -142,6 +147,21 @@ func serve(args []string) int {
 		log.Printf("Port %d is busy. Is CloudBuddy already running? (%v)", cfg.Port, err)
 		return 1
 	}
+	// CLI shims and their socket (D-065), outside CloudBuddy's protected
+	// folder so commands can use them.
+	rt := filepath.Join(os.TempDir(), "cloudbuddy-"+cfg.Epoch)
+	if err := os.MkdirAll(filepath.Join(rt, "sock"), 0o700); err == nil {
+		sock := filepath.Join(rt, "sock", "shim.sock")
+		if sl, err := net.Listen("unix", sock); err == nil {
+			go func() { _ = (&http.Server{Handler: srv.ShimHandler(), ReadHeaderTimeout: 10 * time.Second}).Serve(sl) }()
+			if err := eng.SetupShims(filepath.Join(rt, "shims"), sock, shellenv.Login()["PATH"]); err != nil {
+				log.Println("shims:", err)
+			}
+			defer os.RemoveAll(rt)
+		} else {
+			log.Println("shim socket:", err)
+		}
+	}
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := hs.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -178,8 +198,8 @@ func detectAgents(eng *run.Engine) []server.Agent {
 	var out []server.Agent
 	v, ok := version("claude")
 	out = append(out, server.Agent{Name: "claude", Label: "Claude Code", Version: v, Available: ok})
-	v, ok = version("codex")
-	out = append(out, server.Agent{Name: "codex", Label: "Codex", Version: v, Available: ok})
+	// Codex is paused while CloudBuddy works like native Claude Code (D-066)
+	out = append(out, server.Agent{Name: "codex", Label: "Codex", ComingSoon: true})
 	for _, a := range eng.Agents() {
 		if a == "fake" {
 			out = append(out, server.Agent{Name: "fake", Label: "Demo agent", Version: "replay", Available: true})

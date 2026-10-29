@@ -1,6 +1,6 @@
-// Package sandbox builds the profile cloudbuddy-exec uses for commands that
-// get network: network on, CloudBuddy's own files and the agents' settings
-// off-limits (D-029, D-036).
+// Package sandbox builds the profile cloudbuddy-exec runs every command
+// under: network on, CloudBuddy's own files and the agents' settings
+// off-limits (D-027, D-036, D-065).
 package sandbox
 
 import (
@@ -28,31 +28,35 @@ type Paths struct {
 	Home    string
 	Bin     string
 	Port    int
-	Workdir string   // the project folder the command runs in
-	Folders []string // the project's other folders: writable too
-	Kind    string   // A: plain cloud CLI (no approval needed) | B: approved code
+	ShimDir string // CloudBuddy's CLI shims (D-065): commands may run them, not change them
 }
 
-// cliStateDirs are cache and token folders cloud CLIs and package managers
-// write while they run (S6). Config files that can run code or change which
-// account is used are denied below.
-var cliStateDirs = []string{".aws/cli/cache", ".aws/sso/cache", ".config/gcloud", ".config/stripe", ".cache", ".npm",
-	".pnpm-store", ".yarn/cache", ".wrangler", ".terraform.d/plugin-cache", ".pulumi", ".cdk", ".kube/cache",
-	".azure", ".fly", ".netlify", ".vercel", ".supabase", ".stripe", "Library/Caches",
-	"Library/Preferences/.wrangler", "Library/Application Support/com.vercel.cli", "Library/Application Support/stripe",
-	".local/share/pnpm", "go/pkg/mod"}
-
-// configFiles can make a later command run code or use another account
-// (credential_process, aliases, credential helpers, rc files).
-var configFiles = []string{".aws/config", ".aws/credentials", ".config/gcloud/configurations", ".config/gh", ".gitconfig",
-	".config/git", ".npmrc", ".yarnrc", ".curlrc", ".config/.curlrc", ".wgetrc", ".netrc", ".ssh", ".docker/config.json",
-	".kube/config", ".zshrc", ".zshenv", ".zprofile", ".bashrc", ".bash_profile", ".profile", ".config/stripe/config.toml"}
-
-// secretDirs aren't needed by any cloud CLI: commands that run without the
-// user's approval (kind A) can't read them.
-var secretDirs = []string{".ssh", ".gnupg", "Library/Keychains", "Library/Application Support/Google/Chrome",
-	"Library/Application Support/Firefox", "Library/Safari", "Library/Cookies", "Library/Application Support/Arc",
-	".password-store", ".1password", "Library/Group Containers"}
+// MacProfile returns a sandbox-exec (Seatbelt) profile. Since D-065 commands
+// run as they would in a terminal: network on, every file the user can reach.
+// Only self-protection remains (D-027): the agent can't read or change
+// CloudBuddy's data, the agents' settings and logins, CloudBuddy's binary and
+// shims, or call CloudBuddy's port (where it could approve its own requests).
+func MacProfile(p Paths) string {
+	var b strings.Builder
+	b.WriteString("(version 1)\n(allow default)\n")
+	fmt.Fprintf(&b, "(deny file-read* file-write* (subpath %s))\n", quote(real(p.DataDir)))
+	for _, f := range []string{".claude/settings.json", ".claude/settings.local.json", ".claude.json", ".codex/config.toml", ".codex/rules"} {
+		fmt.Fprintf(&b, "(deny file-write* (literal %s) (subpath %s))\n", quote(filepath.Join(p.Home, f)), quote(filepath.Join(p.Home, f)))
+	}
+	for _, f := range []string{".claude/.credentials.json", ".codex/auth.json"} {
+		fmt.Fprintf(&b, "(deny file-read* file-write* (literal %s))\n", quote(filepath.Join(p.Home, f)))
+	}
+	if p.Bin != "" {
+		fmt.Fprintf(&b, "(deny file-write* (literal %s))\n", quote(real(p.Bin)))
+	}
+	if p.ShimDir != "" {
+		fmt.Fprintf(&b, "(deny file-write* (subpath %s))\n", quote(real(p.ShimDir)))
+	}
+	if p.Port != 0 {
+		fmt.Fprintf(&b, "(deny network-outbound (remote ip \"localhost:%d\"))\n", p.Port)
+	}
+	return b.String()
+}
 
 func quote(p string) string {
 	return `"` + strings.ReplaceAll(strings.ReplaceAll(p, `\`, `\\`), `"`, `\"`) + `"`
@@ -63,47 +67,4 @@ func real(p string) string {
 		return r
 	}
 	return p
-}
-
-// MacProfile returns a sandbox-exec (Seatbelt) profile.
-func MacProfile(p Paths) string {
-	var b strings.Builder
-	b.WriteString("(version 1)\n(allow default)\n")
-	// Writes: only the project folders, temp folders and CLI state folders.
-	// Later rules win, so the protected paths below are denied last.
-	b.WriteString("(deny file-write*)\n(allow file-write* (subpath \"/dev\") (subpath \"/private/tmp\") (subpath \"/private/var/folders\") (subpath \"/tmp\")")
-	for _, d := range append([]string{p.Workdir}, p.Folders...) {
-		if d != "" {
-			fmt.Fprintf(&b, " (subpath %s)", quote(real(d)))
-		}
-	}
-	for _, d := range cliStateDirs {
-		fmt.Fprintf(&b, " (subpath %s)", quote(filepath.Join(p.Home, d)))
-	}
-	b.WriteString(")\n")
-	// CloudBuddy's data: no reading or writing
-	fmt.Fprintf(&b, "(deny file-read* file-write* (subpath %s))\n", quote(real(p.DataDir)))
-	// the agents' settings and logins: no writing; the logins: no reading
-	for _, f := range []string{".claude/settings.json", ".claude/settings.local.json", ".claude.json", ".codex/config.toml", ".codex/rules"} {
-		fmt.Fprintf(&b, "(deny file-write* (literal %s) (subpath %s))\n", quote(filepath.Join(p.Home, f)), quote(filepath.Join(p.Home, f)))
-	}
-	for _, f := range []string{".claude/.credentials.json", ".codex/auth.json"} {
-		fmt.Fprintf(&b, "(deny file-read* file-write* (literal %s))\n", quote(filepath.Join(p.Home, f)))
-	}
-	if p.Bin != "" {
-		fmt.Fprintf(&b, "(deny file-write* (literal %s))\n", quote(real(p.Bin)))
-	}
-	for _, f := range configFiles {
-		fmt.Fprintf(&b, "(deny file-write* (literal %s) (subpath %s))\n", quote(filepath.Join(p.Home, f)), quote(filepath.Join(p.Home, f)))
-	}
-	if p.Kind != "B" {
-		for _, d := range secretDirs {
-			fmt.Fprintf(&b, "(deny file-read* (subpath %s))\n", quote(filepath.Join(p.Home, d)))
-		}
-	}
-	// CloudBuddy's own port
-	if p.Port != 0 {
-		fmt.Fprintf(&b, "(deny network-outbound (remote ip \"localhost:%d\"))\n", p.Port)
-	}
-	return b.String()
 }

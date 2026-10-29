@@ -21,9 +21,11 @@ type Claude struct {
 
 func (c *Claude) Name() string { return "claude" }
 
-// AllowedTools is the tool set CloudBuddy gives Claude Code. Anything else
-// would reach the hook as an unknown tool and ask (coverage, section 4.3).
-const AllowedTools = "Bash,Read,Edit,MultiEdit,Write,Glob,Grep,NotebookEdit,WebFetch,WebSearch,TodoWrite,ToolSearch"
+// AllowedTools is the tool set CloudBuddy gives Claude Code: what a native
+// session uses for project work, including subagents, skills and watching
+// background commands (D-065). Scheduling, remote triggers and worktrees
+// stay out; they act outside the chat. Every call still passes the hook.
+const AllowedTools = "Bash,Read,Edit,MultiEdit,Write,Glob,Grep,NotebookEdit,WebFetch,WebSearch,TodoWrite,ToolSearch,Task,Skill,Monitor,TaskStop,TaskOutput,BashOutput,KillShell"
 
 // Settings returns the --settings document: the gate hook on every tool,
 // the SessionStart canary, and the no-network sandbox whose only way out is
@@ -57,7 +59,7 @@ func claudeArgs(o StartOptions, settingsPath, mcpPath string) []string {
 		"--setting-sources", "",
 		"--settings", settingsPath,
 		"--permission-prompts", "none",
-		"--strict-mcp-config", "--mcp-config", mcpPath,
+		"--mcp-config", mcpPath,
 		"--tools", AllowedTools,
 		"--append-system-prompt", o.Brief,
 	}
@@ -82,6 +84,9 @@ func (c *Claude) Run(ctx context.Context, o StartOptions, out chan<- Event) erro
 		return err
 	}
 	servers := map[string]any{}
+	for name, s := range o.MCPServers {
+		servers[name] = s
+	}
 	for name, s := range o.MCP {
 		servers[name] = map[string]any{"type": "stdio", "command": s.Command, "args": s.Args, "env": s.Env}
 	}
@@ -90,7 +95,7 @@ func (c *Claude) Run(ctx context.Context, o StartOptions, out chan<- Event) erro
 	}
 	cmd := exec.Command("claude", claudeArgs(o, settingsPath, mcpPath)...)
 	cmd.Dir = o.Workdir
-	cmd.Env = baseEnv(o.Env)
+	cmd.Env = baseEnv(o.BaseEnv, o.Env)
 	stderr, _ := os.Create(filepath.Join(o.RunDir, "claude.stderr"))
 	defer stderr.Close()
 	cmd.Stderr = stderr

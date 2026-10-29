@@ -235,3 +235,26 @@ func TestPinnedCLI(t *testing.T) {
 		t.Errorf("installed aws: net=%q reviewed=%v", d.Network, d.ReviewedRead)
 	}
 }
+
+func TestScriptStepsAreNamed(t *testing.T) {
+	env := Env{Home: "/Users/test", Workdir: "/work"}
+	for cmd, want := range map[string]string{
+		"make credit-purchases ENV=dev DAYS=7":                   "make credit-purchases",
+		"HAZLSKY_PROVIDER_CLI_APPROVED=1 python3 scripts/x.py a": "python3 x.py",
+		"cd frontend && pnpm exec wrangler tail web":             "pnpm wrangler",
+	} {
+		d := Recognize(Call{Via: "shell", Command: cmd, WantsNetwork: true, Cwd: "/work"}, env, nil)
+		if d.Provider != "Script" || d.Product != want {
+			t.Errorf("%s: %s / %s, want Script / %s", cmd, d.Provider, d.Product, want)
+		}
+	}
+}
+
+func TestProviderForHost(t *testing.T) {
+	for host, want := range map[string]string{"api.supabase.com": "Supabase", "abc.supabase.co": "Supabase",
+		"sts.us-east-1.amazonaws.com": "AWS", "api.stripe.com:443": "Stripe", "hazl.ca": "", "tail.developers.workers.dev": "Cloudflare"} {
+		if got := ProviderForHost(host); got != want {
+			t.Errorf("%s: %q, want %q", host, got, want)
+		}
+	}
+}

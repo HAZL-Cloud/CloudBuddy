@@ -154,13 +154,10 @@ func TestDemoRunEndToEnd(t *testing.T) {
 	_ = json.Unmarshal(b, &created)
 	id := created.ID
 
+	// D-065: only what can't be undone asks: the delete and the live price
 	answers := map[string]string{
-		"aws s3api create-bucket": "approve",
-		"aws s3 sync":             "approve",
-		"aws cloudfront create":   "approve",
-		"aws s3 rb":               "deny",
-		"stripe prices create":    "approve",
-		"curl -s https://api.stripe.com/v1/prices/price_1QxR8sKj2LmN7pQ": "approve",
+		"aws s3 rb":            "deny",
+		"stripe prices create": "approve",
 	}
 	seen := map[string]bool{}
 	for {
@@ -190,8 +187,8 @@ func TestDemoRunEndToEnd(t *testing.T) {
 			t.Fatalf("second decision accepted: %d", st)
 		}
 	}
-	if len(seen) != 6 {
-		t.Fatalf("expected 6 approvals, saw %d: %v", len(seen), seen)
+	if len(seen) != 2 {
+		t.Fatalf("expected 2 approvals, saw %d: %v", len(seen), seen)
 	}
 	d := e.detail(id)
 	if d.Status != model.ConvDone {
@@ -247,7 +244,7 @@ func TestDemoRunEndToEnd(t *testing.T) {
 	for _, c := range d.Chat {
 		types[c.Type]++
 	}
-	if types["user"] != 1 || types["agent"] < 2 || types["steps"] < 1 || types["approval"] < 5 {
+	if types["user"] != 1 || types["agent"] < 2 || types["steps"] < 1 || types["approval"] != 2 {
 		t.Errorf("chat items: %v", types)
 	}
 }

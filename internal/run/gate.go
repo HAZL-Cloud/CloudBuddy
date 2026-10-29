@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"cloudbuddy/internal/mask"
@@ -38,20 +37,13 @@ type outcome struct {
 }
 
 // gate is the single decision path for every agent tool call (section 4.2).
-func (e *Engine) gate(ctx context.Context, r *Run, toolKey string, call recognize.Call) outcome {
+func (e *Engine) gate(ctx context.Context, r *Run, toolKey string, call recognize.Call, facts ...[2]string) outcome {
 	if r == nil || r.ended.Load() {
 		return outcome{Reason: "This run has ended."}
 	}
 	draft := recognize.Recognize(call, e.env(r), e.adapters)
 	rule := e.ruleFor(ctx, draft.Provider, call.Server)
 	dec := policy.Decide(draft, policy.Context{Rule: rule, CanWrapCode: r.Agent != "codex" && sandbox.CanWrap()})
-
-	// hold new decisions while project code with network runs in one of
-	// these folders (D-029)
-	for _, lk := range e.workLocks(r.projectFolders()) {
-		lk.RLock()
-		lk.RUnlock()
-	}
 
 	uses := e.linksFor(ctx, r, toolKey, call)
 	status := model.StatusRunning
@@ -63,6 +55,7 @@ func (e *Engine) gate(ctx context.Context, r *Run, toolKey string, call recogniz
 	}
 	st, err := e.st.UpsertStep(ctx, r.ConvID, r.ID, toolKey, func(s *model.Step, isNew bool) {
 		applyDraft(s, draft, call)
+		s.Facts = append(s.Facts, facts...)
 		s.Status = status
 		if len(uses) > 0 {
 			s.Uses = uses
@@ -192,7 +185,7 @@ func applyDraft(s *model.Step, d recognize.Draft, call recognize.Call) {
 	if s.Facts == nil {
 		s.Facts = [][2]string{}
 	}
-	if d.Identity.Label != "" && d.Kind == "cloud" {
+	if d.Identity.Label != "" && d.Identity.Label != "unknown" && d.Kind == "cloud" {
 		s.Facts = append(s.Facts, [2]string{"Account", d.Identity.Label})
 	}
 	s.RecognizedBy = d.RecognizedBy
@@ -275,28 +268,6 @@ func filesDigest(command, cwd string) string {
 		fmt.Fprintf(h, "%s %x\n", f, sum)
 	}
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-// workLocks returns one lock per folder, in a fixed order, so two holders
-// that need several folders can't wait on each other.
-func (e *Engine) workLocks(dirs []string) []*sync.RWMutex {
-	sorted := append([]string{}, dirs...)
-	sort.Strings(sorted)
-	e.workMu.Lock()
-	defer e.workMu.Unlock()
-	var out []*sync.RWMutex
-	for i, dir := range sorted {
-		if i > 0 && dir == sorted[i-1] {
-			continue
-		}
-		lk := e.workLk[dir]
-		if lk == nil {
-			lk = &sync.RWMutex{}
-			e.workLk[dir] = lk
-		}
-		out = append(out, lk)
-	}
-	return out
 }
 
 func (e *Engine) updateStepByID(ctx context.Context, r *Run, stepID string, f func(*model.Step)) (model.Step, bool, error) {

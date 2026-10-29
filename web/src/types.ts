@@ -6,6 +6,8 @@ export interface Agent {
   label: string
   version: string
   available: boolean
+  /** Shown but not usable yet (D-066). */
+  comingSoon?: boolean
 }
 
 export type Action = 'read' | 'create' | 'change' | 'send' | 'delete' | 'unknown'

@@ -10,7 +10,9 @@ import (
 
 	"cloudbuddy/internal/config"
 	"cloudbuddy/internal/model"
+	"cloudbuddy/internal/netlog"
 	"cloudbuddy/internal/sandbox"
+	"cloudbuddy/internal/shim"
 	"cloudbuddy/internal/store"
 )
 
@@ -25,18 +27,22 @@ func hashToken(t string) string {
 type ReleaseInfo struct {
 	Command string `json:"command"`
 	Cwd     string `json:"cwd"`
-	Profile string `json:"profile"` // sandbox-exec profile (network on, protected files off)
-	Kind    string `json:"kind"`    // A | B
+	Profile string `json:"profile"` // sandbox-exec profile: network on, CloudBuddy's own files off (D-065)
+	Kind    string `json:"kind"`    // "" | A | B, as recognized
 	StepID  string `json:"stepId"`
-	Path    string `json:"path"` // PATH CloudBuddy was started with, so project folders can't shadow a CLI
+	// PathPrefix goes in front of PATH: the folder of CLI shims (D-065).
+	PathPrefix string            `json:"pathPrefix,omitempty"`
+	Env        map[string]string `json:"env,omitempty"` // shim socket and token, network log proxy
+	Background bool              `json:"background,omitempty"`
 }
 
 var ErrStale = errors.New("this release is unknown, used, stale, or its files changed")
 
 // Release is the atomic release step (D-024, D-036): it uses the token once,
-// consumes the approval once, and checks the files the command runs haven't
-// changed since the user approved it.
-func (e *Engine) Release(ctx context.Context, token, _ string) (ReleaseInfo, error) {
+// consumes the approval once, and for approved project code checks the files
+// it runs haven't changed since the user said yes. It also starts the
+// command's network log and shim access (D-065).
+func (e *Engine) Release(ctx context.Context, token, _ string, pid int) (ReleaseInfo, error) {
 	rel, err := e.st.ConsumeRelease(ctx, hashToken(token), e.cfg.Epoch)
 	if err != nil {
 		return ReleaseInfo{}, ErrStale
@@ -51,24 +57,7 @@ func (e *Engine) Release(ctx context.Context, token, _ string) (ReleaseInfo, err
 		if err := e.st.ConsumeApprovalByID(ctx, rel.ApprovalID, rel.RunID, e.cfg.Epoch); err != nil {
 			return ReleaseInfo{}, ErrStale
 		}
-	}
-	if rel.NetworkKind == "B" {
-		// Reserve the project folders before checking the files, and keep
-		// them until cloudbuddy exec reports the command finished (D-029).
-		lks := e.workLocks(r.projectFolders())
-		for _, lk := range lks {
-			lk.Lock()
-		}
-		key := hashToken(token)
-		e.mu.Lock()
-		e.heldLocks[key] = lks
-		e.mu.Unlock()
-		go func() { // last resort if the wrapper never reports back
-			time.Sleep(2*time.Hour + 10*time.Minute) // after cloudbuddy exec's own 2-hour kill
-			e.releaseHold(key)
-		}()
-		if rel.ExecDigest == "" || filesDigest(rel.Command, rel.Cwd) != rel.ExecDigest {
-			e.releaseHold(key)
+		if rel.NetworkKind == "B" && (rel.ExecDigest == "" || filesDigest(rel.Command, rel.Cwd) != rel.ExecDigest) {
 			_, _, _ = e.updateStepByID(context.Background(), r, rel.StepID, func(s *model.Step) {
 				s.Status = model.StatusDenied
 				now := time.Now().UTC()
@@ -79,26 +68,47 @@ func (e *Engine) Release(ctx context.Context, token, _ string) (ReleaseInfo, err
 			return ReleaseInfo{}, ErrStale
 		}
 	}
-	return ReleaseInfo{Command: rel.Command, Cwd: rel.Cwd, Kind: rel.NetworkKind, StepID: rel.StepID, Path: os.Getenv("PATH"),
-		Profile: sandbox.MacProfile(sandbox.Paths{DataDir: e.cfg.DataDir, Home: e.cfg.Home, Bin: e.cfg.Bin, Port: e.cfg.Port, Workdir: r.Workdir, Folders: r.Folders, Kind: rel.NetworkKind})}, nil
-}
-
-// ExecFinished is called by cloudbuddy exec when the command ends.
-func (e *Engine) ExecFinished(token string, exitCode int, leftovers int) {
-	key := hashToken(token)
-	e.releaseHold(key)
-	_ = exitCode
-	_ = leftovers
-}
-
-func (e *Engine) releaseHold(key string) {
-	e.mu.Lock()
-	lks := e.heldLocks[key]
-	delete(e.heldLocks, key)
-	e.mu.Unlock()
-	for _, lk := range lks {
-		lk.Unlock()
+	r.mu.Lock()
+	bg := r.bgSteps[rel.StepID]
+	r.mu.Unlock()
+	x := &execState{runID: r.ID, stepID: rel.StepID, tokenHash: hashToken(token), pid: pid, background: bg,
+		quiet: rel.NetworkKind == "A", shimToken: randomToken(), started: time.Now()}
+	info := ReleaseInfo{Command: rel.Command, Cwd: rel.Cwd, Kind: rel.NetworkKind, StepID: rel.StepID, Background: bg,
+		Profile: sandbox.MacProfile(sandbox.Paths{DataDir: e.cfg.DataDir, Home: e.cfg.Home, Bin: e.cfg.Bin, Port: e.cfg.Port, ShimDir: e.shimDir}),
+		Env:     map[string]string{}}
+	if e.shimDir != "" && e.shimSock != "" {
+		info.PathPrefix = e.shimDir
+		info.Env[shim.EnvDir] = e.shimDir
+		info.Env[shim.EnvSock] = e.shimSock
+		info.Env[shim.EnvToken] = x.shimToken
 	}
+	if e.netlogOn(r) {
+		if l, err := netlog.Start(); err == nil {
+			x.log = l
+			for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+				info.Env[k] = l.URL()
+			}
+			info.Env["NO_PROXY"] = "localhost,127.0.0.1,::1,.local,.localhost"
+			info.Env["no_proxy"] = info.Env["NO_PROXY"]
+			info.Env["NODE_USE_ENV_PROXY"] = "1"
+		}
+	}
+	e.trackExec(x)
+	return info, nil
+}
+
+// netlogOn: the network log is on unless the user already routes traffic
+// through a proxy of their own, or turned it off.
+func (e *Engine) netlogOn(r *Run) bool {
+	if os.Getenv("CB_NO_NETLOG") == "1" {
+		return false
+	}
+	for _, k := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"} {
+		if r.Env[k] != "" {
+			return false
+		}
+	}
+	return true
 }
 
 var _ = store.ErrNotPending
