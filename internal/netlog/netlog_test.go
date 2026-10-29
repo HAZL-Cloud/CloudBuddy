@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRecordsPlainAndTunnelledHosts(t *testing.T) {
@@ -78,5 +79,48 @@ func TestRefusesThisComputer(t *testing.T) {
 				t.Errorf("%s reached through the proxy", target)
 			}
 		}
+	}
+}
+
+// Stop closes tunnels that are still open, such as a log tail's.
+func TestStopClosesOpenTunnels(t *testing.T) {
+	allowLocalForTests = true
+	defer func() { allowLocalForTests = false }()
+	// a server that accepts and never answers or closes
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c // held open
+		}
+	}()
+	l, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := net.Dial("tcp", l.ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_, _ = c.Write([]byte("CONNECT " + ln.Addr().String() + " HTTP/1.1\r\nHost: " + ln.Addr().String() + "\r\n\r\n"))
+	buf := make([]byte, 128)
+	if n, _ := c.Read(buf); !strings.Contains(string(buf[:n]), "200") {
+		t.Fatalf("no tunnel: %q", buf[:n])
+	}
+	if l.Open() != 2 {
+		t.Fatalf("open ends: %d", l.Open())
+	}
+	l.Stop()
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := c.Read(buf); err == nil {
+		t.Errorf("tunnel still open after Stop")
 	}
 }

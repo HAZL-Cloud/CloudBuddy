@@ -13,6 +13,7 @@ import (
 
 // Claude drives `claude -p` with the launch flags from D-039.
 type Claude struct {
+	Exe       string // claude, found once at start-up ("" means "claude" on PATH)
 	Bin       string // the cloudbuddy binary (hook and exec wrapper)
 	DataDir   string
 	Home      string
@@ -93,7 +94,11 @@ func (c *Claude) Run(ctx context.Context, o StartOptions, out chan<- Event) erro
 	if err := writeJSON(mcpPath, map[string]any{"mcpServers": servers}); err != nil {
 		return err
 	}
-	cmd := exec.Command("claude", claudeArgs(o, settingsPath, mcpPath)...)
+	exe := c.Exe
+	if exe == "" {
+		exe = "claude"
+	}
+	cmd := exec.Command(exe, claudeArgs(o, settingsPath, mcpPath)...)
 	cmd.Dir = o.Workdir
 	cmd.Env = baseEnv(o.BaseEnv, o.Env)
 	stderr, _ := os.Create(filepath.Join(o.RunDir, "claude.stderr"))

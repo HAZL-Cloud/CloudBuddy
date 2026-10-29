@@ -28,16 +28,19 @@ import (
 
 // Env names the shim reads; cloudbuddy exec sets them.
 const (
-	EnvSock  = "CB_SHIM_SOCK"
-	EnvToken = "CB_SHIM_TOKEN"
-	EnvDir   = "CB_SHIM_DIR"
+	EnvSock     = "CB_SHIM_SOCK"
+	EnvToken    = "CB_SHIM_TOKEN"
+	EnvDir      = "CB_SHIM_DIR"
+	EnvExpected = "CB_SHIM_EXPECTED" // the copy of the CLI the run started with
 )
 
 const maxOutput = 64 << 10
 
-// Script is the file CloudBuddy writes for one CLI in the shim folder.
-func Script(bin, name string) string {
-	return fmt.Sprintf("#!/bin/sh\nexec '%s' shim '%s' \"$@\"\n", strings.ReplaceAll(bin, "'", `'\''`), name)
+// Script is the file CloudBuddy writes for one CLI in a run's shim folder.
+// real is the copy found on the run's PATH when the run started.
+func Script(bin, name, real string) string {
+	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+	return fmt.Sprintf("#!/bin/sh\n%s=%s exec %s shim %s \"$@\"\n", EnvExpected, q(real), q(bin), q(name))
 }
 
 type startAnswer struct {
@@ -57,16 +60,21 @@ func Main(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s: command not found\n", name)
 		return 127
 	}
+	// another copy than the installed one (the project's, or one a script
+	// put first on PATH): the card says which program really runs
+	copy := ""
+	if want := os.Getenv(EnvExpected); want == "" || !samePath(real, want) {
+		copy = real
+	}
+	cwd, _ := os.Getwd()
 	sock, token := os.Getenv(EnvSock), os.Getenv(EnvToken)
 	if sock == "" || token == "" {
-		return run(real, rest, nil)
+		return unasked(name, rest, real, cwd, "its settings were removed")
 	}
 	c := client(sock)
-	cwd, _ := os.Getwd()
 	var ans startAnswer
-	if err := post(c, "/shim/start", map[string]any{"token": token, "prog": name, "args": rest, "cwd": cwd}, &ans); err != nil {
-		fmt.Fprintf(os.Stderr, "[CloudBuddy couldn't record this %s call (%v); it runs without a card.]\n", name, err)
-		return run(real, rest, nil)
+	if err := post(c, "/shim/start", map[string]any{"token": token, "prog": name, "args": rest, "cwd": cwd, "copy": copy}, &ans); err != nil {
+		return unasked(name, rest, real, cwd, err.Error())
 	}
 	if ans.Decision != "allow" {
 		fmt.Fprintf(os.Stderr, "CloudBuddy stopped this %s call: %s\n", name, ans.Reason)
@@ -79,6 +87,33 @@ func Main(args []string) int {
 	code := run(real, rest, &out)
 	_ = post(c, "/shim/end", map[string]any{"token": token, "key": ans.Key, "exitCode": code, "output": out.String()}, nil)
 	return code
+}
+
+// unasked runs a call CloudBuddy couldn't be asked about. It decides with
+// the same recognizer and rules the gate uses: anything that would ask (a
+// delete, a payment, a message to people, a live-mode change) doesn't run;
+// the rest runs with a warning (Codex review of D-065).
+func unasked(name string, args []string, real, cwd, why string) int {
+	if Decide != nil && !Decide(name, args, cwd) {
+		fmt.Fprintf(os.Stderr, "CloudBuddy couldn't ask you about this %s call (%s), and it can't be undone, so it didn't run.\n", name, why)
+		return 126
+	}
+	fmt.Fprintf(os.Stderr, "[CloudBuddy couldn't record this %s call (%s); it runs without a card.]\n", name, why)
+	return run(real, args, nil)
+}
+
+// Decide reports whether a call would run without asking. main sets it to
+// the gate's recognizer and policy; the shim package doesn't import them.
+var Decide func(name string, args []string, cwd string) bool
+
+func samePath(a, b string) bool {
+	if ra, err := filepath.EvalSymlinks(a); err == nil {
+		a = ra
+	}
+	if rb, err := filepath.EvalSymlinks(b); err == nil {
+		b = rb
+	}
+	return a == b
 }
 
 // findReal finds the CLI on PATH, skipping CloudBuddy's shim folder.
@@ -175,3 +210,19 @@ func (t *tail) Write(p []byte) (int, error) {
 }
 
 func (t *tail) String() string { return string(t.b) }
+
+// Join quotes a CLI call as one shell command line, so the recognizer reads
+// back exactly these words.
+func Join(prog string, args []string) string {
+	parts := []string{prog}
+	for _, a := range args {
+		if a != "" && strings.IndexFunc(a, func(c rune) bool {
+			return !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-_./:=,@%+", c))
+		}) < 0 {
+			parts = append(parts, a)
+			continue
+		}
+		parts = append(parts, "'"+strings.ReplaceAll(a, "'", `'\''`)+"'")
+	}
+	return strings.Join(parts, " ")
+}

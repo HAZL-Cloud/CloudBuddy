@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"strings"
 	"time"
 
 	"cloudbuddy/internal/config"
 	"cloudbuddy/internal/model"
 	"cloudbuddy/internal/netlog"
-	"cloudbuddy/internal/sandbox"
 	"cloudbuddy/internal/shim"
 	"cloudbuddy/internal/store"
 )
@@ -74,11 +74,10 @@ func (e *Engine) Release(ctx context.Context, token, _ string, pid int) (Release
 	x := &execState{runID: r.ID, stepID: rel.StepID, tokenHash: hashToken(token), pid: pid, background: bg,
 		quiet: rel.NetworkKind == "A", shimToken: randomToken(), started: time.Now()}
 	info := ReleaseInfo{Command: rel.Command, Cwd: rel.Cwd, Kind: rel.NetworkKind, StepID: rel.StepID, Background: bg,
-		Profile: sandbox.MacProfile(sandbox.Paths{DataDir: e.cfg.DataDir, Home: e.cfg.Home, Bin: e.cfg.Bin, Port: e.cfg.Port, ShimDir: e.shimDir}),
-		Env:     map[string]string{}}
-	if e.shimDir != "" && e.shimSock != "" {
-		info.PathPrefix = e.shimDir
-		info.Env[shim.EnvDir] = e.shimDir
+		Profile: e.profile(), Env: map[string]string{}}
+	if r.shimDir != "" && e.shimSock != "" {
+		info.PathPrefix = r.shimDir
+		info.Env[shim.EnvDir] = r.shimDir
 		info.Env[shim.EnvSock] = e.shimSock
 		info.Env[shim.EnvToken] = x.shimToken
 	}
@@ -88,8 +87,14 @@ func (e *Engine) Release(ctx context.Context, token, _ string, pid int) (Release
 			for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
 				info.Env[k] = l.URL()
 			}
-			info.Env["NO_PROXY"] = "localhost,127.0.0.1,::1,.local,.localhost"
-			info.Env["no_proxy"] = info.Env["NO_PROXY"]
+			// keep the user's own exceptions (Codex review of D-065)
+			noProxy := "localhost,127.0.0.1,::1,.local,.localhost"
+			for _, k := range []string{"NO_PROXY", "no_proxy"} {
+				if v := strings.TrimSpace(r.Env[k]); v != "" {
+					noProxy += "," + v
+				}
+			}
+			info.Env["NO_PROXY"], info.Env["no_proxy"] = noProxy, noProxy
 			info.Env["NODE_USE_ENV_PROXY"] = "1"
 		}
 	}

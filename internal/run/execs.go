@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -14,6 +12,7 @@ import (
 	"cloudbuddy/internal/mask"
 	"cloudbuddy/internal/model"
 	"cloudbuddy/internal/netlog"
+	"cloudbuddy/internal/policy"
 	"cloudbuddy/internal/recognize"
 	"cloudbuddy/internal/shim"
 	"cloudbuddy/internal/store"
@@ -172,34 +171,22 @@ func (e *Engine) StopStep(ctx context.Context, stepID string) error {
 
 // ---------- shims (D-065) ----------
 
-// SetupShims writes one shim per installed cloud CLI into dir; sock is where
-// the shims reach CloudBuddy.
-func (e *Engine) SetupShims(dir, sock string, path string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+// SetShims tells the engine where per-run shim folders go and where the
+// shims reach CloudBuddy (D-065).
+func (e *Engine) SetShims(root, sock string) error {
+	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
 	}
-	for _, name := range recognize.ShimCLIs() {
-		if _, err := lookPathIn(name, path); err != nil {
-			continue
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(shim.Script(e.cfg.Bin, name)), 0o755); err != nil {
-			return err
-		}
-	}
-	e.shimDir, e.shimSock = dir, sock
+	e.shimRoot, e.shimSock = root, sock
 	return nil
 }
 
-func lookPathIn(name, path string) (string, error) {
-	old := os.Getenv("PATH")
-	defer os.Setenv("PATH", old)
-	_ = os.Setenv("PATH", path)
-	return exec.LookPath(name)
-}
+// SetDirenv pins the direnv CloudBuddy runs for each folder.
+func (e *Engine) SetDirenv(bin string) { e.direnvBin = bin }
 
 // ShimStart decides one CLI call a script made. It shows as its own card
 // under the command that ran the script, and asks first like any call.
-func (e *Engine) ShimStart(ctx context.Context, token, prog string, args []string, cwd string) (bool, string, string) {
+func (e *Engine) ShimStart(ctx context.Context, token, prog string, args []string, cwd, copy string) (bool, string, string) {
 	e.execMu.Lock()
 	x := e.execByShim[token]
 	e.execMu.Unlock()
@@ -210,8 +197,22 @@ func (e *Engine) ShimStart(ctx context.Context, token, prog string, args []strin
 	if r == nil || r.ended.Load() {
 		return false, "This run has ended.", ""
 	}
-	if x.quiet {
-		return true, "", ""
+	call := recognize.Call{Agent: r.Agent, Via: "shell", Command: shellJoin(prog, args), WantsNetwork: true, Cwd: cwd}
+	if cwd == "" {
+		call.Cwd = r.Workdir
+	}
+	// Quiet: the command's own card already shows this installed CLI call.
+	// It only skips the card for a call that runs anyway; anything that
+	// would ask goes through the gate (Codex review of D-065).
+	if x.quiet && copy == "" {
+		d := recognize.Recognize(call, e.env(r), e.adapters)
+		if policy.Decide(d, policy.Context{Rule: e.ruleFor(ctx, d.Provider, ""), CanWrapCode: true}).Verdict == policy.Allow {
+			return true, "", ""
+		}
+	}
+	facts := [][2]string{}
+	if copy != "" {
+		facts = append(facts, [2]string{"Program", copy})
 	}
 	parent := ""
 	if convID, key, err := e.st.StepConversation(ctx, x.stepID); err == nil {
@@ -220,11 +221,7 @@ func (e *Engine) ShimStart(ctx context.Context, token, prog string, args []strin
 		}
 	}
 	key := store.NewID("shim")
-	call := recognize.Call{Agent: r.Agent, Via: "shell", Command: shellJoin(prog, args), WantsNetwork: true, Cwd: cwd}
-	if cwd == "" {
-		call.Cwd = r.Workdir
-	}
-	o := e.gate(ctx, r, key, call, [2]string{"Run by", parent})
+	o := e.gate(ctx, r, key, call, append(facts, [2]string{"Run by", parent})...)
 	if !o.Allowed {
 		return false, o.Reason, ""
 	}
@@ -274,19 +271,7 @@ func (e *Engine) ShimEnd(token, key string, exitCode int, output string) {
 }
 
 // shellJoin quotes a CLI call so the recognizer reads back the same words.
-func shellJoin(prog string, args []string) string {
-	parts := []string{prog}
-	for _, a := range args {
-		if a != "" && strings.IndexFunc(a, func(c rune) bool {
-			return !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-_./:=,@%+", c))
-		}) < 0 {
-			parts = append(parts, a)
-			continue
-		}
-		parts = append(parts, "'"+strings.ReplaceAll(a, "'", `'\''`)+"'")
-	}
-	return strings.Join(parts, " ")
-}
+func shellJoin(prog string, args []string) string { return shim.Join(prog, args) }
 
 var _ = fmt.Sprintf
 

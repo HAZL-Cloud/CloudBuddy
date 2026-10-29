@@ -27,7 +27,7 @@ func TestLoginHasPathAndHome(t *testing.T) {
 
 func TestDirenvWithoutEnvrcChangesNothing(t *testing.T) {
 	env := map[string]string{"PATH": os.Getenv("PATH"), "HOME": os.Getenv("HOME"), "KEEP": "1"}
-	if note := Direnv(env, t.TempDir()); note != "" {
+	if note := Direnv(env, t.TempDir(), "/opt/homebrew/bin/direnv", ""); note != "" {
 		t.Errorf("note without .envrc: %s", note)
 	}
 	if env["KEEP"] != "1" {
@@ -44,7 +44,7 @@ func TestDirenvBlockedEnvrcGivesNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := map[string]string{"PATH": os.Getenv("PATH"), "HOME": os.Getenv("HOME")}
-	if note := Direnv(env, dir); note == "" {
+	if note := Direnv(env, dir, "/opt/homebrew/bin/direnv", ""); note == "" {
 		t.Errorf("no note for a blocked .envrc")
 	}
 	if env["CB_TEST_DIRENV"] != "" {
