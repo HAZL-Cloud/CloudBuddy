@@ -34,6 +34,7 @@ import (
 	"cloudbuddy/internal/execwrap"
 	"cloudbuddy/internal/hookcmd"
 	"cloudbuddy/internal/mcpgw"
+	"cloudbuddy/internal/policy"
 	"cloudbuddy/internal/recognize"
 	"cloudbuddy/internal/run"
 	"cloudbuddy/internal/server"
@@ -57,6 +58,7 @@ func main() {
 	case "exec":
 		os.Exit(execwrap.Main(args))
 	case "shim":
+		shim.Decide = shimDecide
 		os.Exit(shim.Main(args))
 	case "mcp-gateway":
 		os.Exit(mcpgw.Main(args))
@@ -139,6 +141,22 @@ func serve(args []string) int {
 			webFS = os.DirFS(guess)
 		}
 	}
+	// Programs CloudBuddy runs outside the sandbox are found once, here, and
+	// the folders they and the user's PATH live in are kept out of commands'
+	// reach (Codex review of D-065).
+	loginPath := shellenv.Login()["PATH"]
+	claudeExe, _ := exec.LookPath("claude")
+	direnvExe := shellenv.Find(loginPath, "direnv")
+	if direnvExe == "" {
+		direnvExe, _ = exec.LookPath("direnv")
+	}
+	eng.SetClaude(claudeExe)
+	eng.SetDirenv(direnvExe)
+	programs := []string{claudeExe, direnvExe}
+	for _, name := range recognize.ShimCLIs() {
+		programs = append(programs, shellenv.Find(loginPath, name))
+	}
+	eng.Protect([]string{loginPath, os.Getenv("PATH")}, programs)
 	agents := detectAgents(eng)
 	srv := server.New(cfg, eng, b, webFS, func() []server.Agent { return agents }, scan)
 
@@ -154,7 +172,7 @@ func serve(args []string) int {
 		sock := filepath.Join(rt, "sock", "shim.sock")
 		if sl, err := net.Listen("unix", sock); err == nil {
 			go func() { _ = (&http.Server{Handler: srv.ShimHandler(), ReadHeaderTimeout: 10 * time.Second}).Serve(sl) }()
-			if err := eng.SetupShims(filepath.Join(rt, "shims"), sock, shellenv.Login()["PATH"]); err != nil {
+			if err := eng.SetShims(filepath.Join(rt, "shims"), sock); err != nil {
 				log.Println("shims:", err)
 			}
 			defer os.RemoveAll(rt)
@@ -219,4 +237,14 @@ func openBrowser(url string) {
 		return
 	}
 	_ = c.Start()
+}
+
+// shimDecide is how a shim decides a call when it can't reach CloudBuddy:
+// the gate's own recognizer and rules, with the default connection rule.
+func shimDecide(name string, args []string, cwd string) bool {
+	home, _ := os.UserHomeDir()
+	ads, _ := recognize.LoadAdapters("", adapters.FS())
+	d := recognize.Recognize(recognize.Call{Agent: "claude", Via: "shell", Command: shim.Join(name, args), WantsNetwork: true, Cwd: cwd},
+		recognize.Env{Home: home, Workdir: cwd}, ads)
+	return policy.Decide(d, policy.Context{CanWrapCode: true}).Verdict == policy.Allow
 }

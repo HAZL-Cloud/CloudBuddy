@@ -570,14 +570,14 @@ func (s *Server) ShimHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /shim/start", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Token, Prog, Cwd string
-			Args             []string
+			Token, Prog, Cwd, Copy string
+			Args                   []string
 		}
 		if err := readJSON(r, &body); err != nil || body.Token == "" || body.Prog == "" {
 			writeErr(w, 400, "bad_request")
 			return
 		}
-		ok, reason, key := s.eng.ShimStart(r.Context(), body.Token, body.Prog, body.Args, body.Cwd)
+		ok, reason, key := s.eng.ShimStart(r.Context(), body.Token, body.Prog, body.Args, body.Cwd, body.Copy)
 		decision := "deny"
 		if ok {
 			decision = "allow"

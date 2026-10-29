@@ -168,19 +168,17 @@ func (e *Engine) MCPResult(ctx context.Context, runID, key, output string, isErr
 	e.bus.Conversation(r.ConvID)
 }
 
-// claudeMCPServers are the MCP servers a native Claude Code session in this
-// folder would load: the user's own (~/.claude.json), the folder's local
-// ones, and the folder's .mcp.json servers the user enabled. They go to
+// claudeMCPServers are the MCP servers the user set up for Claude Code in
+// ~/.claude.json: their own, and the local ones for this folder. They go to
 // Claude Code as they are, URL and OAuth servers included, and its hook
-// gates every call (D-065). A server turned Off in Connections is left out.
+// gates every call (D-065). A project's .mcp.json isn't used: commands can
+// change it, and its servers start outside the sandbox (Codex review). A
+// server turned Off in Connections is left out.
 func (e *Engine) claudeMCPServers(r *Run) map[string]any {
 	out := map[string]any{}
 	rules, _ := e.st.Rules(context.Background())
-	add := func(servers map[string]any, only map[string]bool) {
+	add := func(servers map[string]any) {
 		for name, def := range servers {
-			if only != nil && !only[name] {
-				continue
-			}
 			if rules["mcp:"+name] == model.RuleOff {
 				continue
 			}
@@ -191,36 +189,18 @@ func (e *Engine) claudeMCPServers(r *Run) map[string]any {
 		var cfg struct {
 			MCPServers map[string]any `json:"mcpServers"`
 			Projects   map[string]struct {
-				MCPServers       map[string]any `json:"mcpServers"`
-				EnabledMcpjson   []string       `json:"enabledMcpjsonServers"`
-				EnableAllMcpjson bool           `json:"enableAllProjectMcpServers"`
+				MCPServers map[string]any `json:"mcpServers"`
 			} `json:"projects"`
 		}
 		if b, err := os.ReadFile(filepath.Join(e.cfg.Home, ".claude.json")); err == nil && json.Unmarshal(b, &cfg) == nil {
-			add(cfg.MCPServers, nil)
-			if p, ok := cfg.Projects[r.Workdir]; ok {
-				add(p.MCPServers, nil)
-				var proj struct {
-					MCPServers map[string]any `json:"mcpServers"`
-				}
-				if b, err := os.ReadFile(filepath.Join(r.Workdir, ".mcp.json")); err == nil && json.Unmarshal(b, &proj) == nil {
-					if p.EnableAllMcpjson {
-						add(proj.MCPServers, nil)
-					} else {
-						only := map[string]bool{}
-						for _, n := range p.EnabledMcpjson {
-							only[n] = true
-						}
-						add(proj.MCPServers, only)
-					}
-				}
-			}
+			add(cfg.MCPServers)
+			add(cfg.Projects[r.Workdir].MCPServers)
 		}
 	}
 	if extra := os.Getenv("CB_EXTRA_MCP"); extra != "" { // tests: {"name": {command,args,env}}
 		var m map[string]any
 		if json.Unmarshal([]byte(extra), &m) == nil {
-			add(m, nil)
+			add(m)
 		}
 	}
 	return out

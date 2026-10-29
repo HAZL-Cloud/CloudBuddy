@@ -1,6 +1,9 @@
 package sandbox
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -24,6 +27,42 @@ func TestProfileKeepsOnlySelfProtection(t *testing.T) {
 	for _, gone := range []string{"(deny file-write*)\n", ".ssh", ".config/stripe", "Library/Keychains"} {
 		if strings.Contains(p, gone) {
 			t.Errorf("profile still has %q", gone)
+		}
+	}
+}
+
+// The profile really works under sandbox-exec: ordinary writes run, while
+// startup files, PATH folders, CloudBuddy's data and the escape programs
+// are refused (Codex review of D-065).
+func TestProfileUnderSandboxExec(t *testing.T) {
+	if !CanWrap() {
+		t.Skip("needs macOS sandbox-exec")
+	}
+	home := t.TempDir()
+	bin := filepath.Join(home, ".local", "bin")
+	data := filepath.Join(home, ".cloudbuddy")
+	for _, d := range []string{bin, data, filepath.Join(home, "project")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := MacProfile(Paths{DataDir: data, Home: home, Port: 7420, DenyWrite: []string{bin}})
+	run := func(script string) error {
+		return exec.Command("/usr/bin/sandbox-exec", "-p", p, "/bin/sh", "-c", script).Run()
+	}
+	if err := run("echo ok > " + filepath.Join(home, "project", "out.txt")); err != nil {
+		t.Errorf("an ordinary write was refused: %v", err)
+	}
+	for name, script := range map[string]string{
+		"shell startup file": "echo evil >> " + filepath.Join(home, ".zshrc"),
+		"PATH folder":        "echo evil > " + filepath.Join(bin, "ps"),
+		"LaunchAgents":       "mkdir -p " + filepath.Join(home, "Library", "LaunchAgents") + " && echo x > " + filepath.Join(home, "Library", "LaunchAgents", "x.plist"),
+		"CloudBuddy data":    "cat " + filepath.Join(data, "x") + " 2>/dev/null || ls " + data,
+		"open":               "/usr/bin/open -h",
+		"osascript":          "/usr/bin/osascript -e 'return 1'",
+	} {
+		if err := run(script); err == nil {
+			t.Errorf("%s: not refused", name)
 		}
 	}
 }

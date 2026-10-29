@@ -23,11 +23,13 @@ type Hit struct {
 }
 
 type Log struct {
-	ln   net.Listener
-	srv  *http.Server
-	mu   sync.Mutex
-	hits map[string]int
-	tr   *http.Transport
+	ln      net.Listener
+	srv     *http.Server
+	mu      sync.Mutex
+	hits    map[string]int
+	tr      *http.Transport
+	tunnels map[net.Conn]bool // both ends of every open tunnel
+	stopped bool
 }
 
 // Start listens on a free local port.
@@ -36,7 +38,7 @@ func Start() (*Log, error) {
 	if err != nil {
 		return nil, err
 	}
-	l := &Log{ln: ln, hits: map[string]int{},
+	l := &Log{ln: ln, hits: map[string]int{}, tunnels: map[net.Conn]bool{},
 		tr: &http.Transport{Proxy: nil, DialContext: dialer.DialContext,
 			ForceAttemptHTTP2: false, MaxIdleConns: 10, IdleConnTimeout: 30 * time.Second}}
 	l.srv = &http.Server{Handler: l, ReadHeaderTimeout: 30 * time.Second}
@@ -52,7 +54,34 @@ func (l *Log) URL() string { return "http://" + l.ln.Addr().String() }
 func (l *Log) Stop() []Hit {
 	_ = l.srv.Close()
 	l.tr.CloseIdleConnections()
+	l.mu.Lock()
+	l.stopped = true
+	for c := range l.tunnels {
+		_ = c.Close() // hijacked tunnels aren't closed by srv.Close
+	}
+	l.mu.Unlock()
 	return l.Hits()
+}
+
+// track keeps a tunnel end so Stop can close it; false once stopped.
+func (l *Log) track(conns ...net.Conn) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.stopped {
+		return false
+	}
+	for _, c := range conns {
+		l.tunnels[c] = true
+	}
+	return true
+}
+
+func (l *Log) untrack(conns ...net.Conn) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, c := range conns {
+		delete(l.tunnels, c)
+	}
 }
 
 // Hits returns the hosts seen so far, most used first.
@@ -134,6 +163,12 @@ func (l *Log) tunnel(w http.ResponseWriter, r *http.Request) {
 		up.Close()
 		return
 	}
+	if !l.track(conn, up) {
+		conn.Close()
+		up.Close()
+		return
+	}
+	defer l.untrack(conn, up)
 	_, _ = conn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
 	if n := buf.Reader.Buffered(); n > 0 {
 		pending, _ := buf.Reader.Peek(n)
@@ -143,7 +178,13 @@ func (l *Log) tunnel(w http.ResponseWriter, r *http.Request) {
 	go func() { _, _ = io.Copy(up, conn); closeWrite(up); done <- struct{}{} }()
 	go func() { _, _ = io.Copy(conn, up); closeWrite(conn); done <- struct{}{} }()
 	<-done
-	<-done
+	// One side finished. Give the other a moment to drain its answer, then
+	// close both, so a server that keeps its end open can't hold the tunnel
+	// (and two goroutines) after the client has gone.
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+	}
 	conn.Close()
 	up.Close()
 }
@@ -215,4 +256,11 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// Open is how many tunnels are open (tests).
+func (l *Log) Open() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.tunnels)
 }

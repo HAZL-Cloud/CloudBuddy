@@ -157,7 +157,9 @@ func killLeftovers(cmd *exec.Cmd, mark string) int {
 			n++
 		}
 	}
-	out, err := exec.Command("ps", "-Ewwax", "-o", "pid=,command=").Output()
+	// a full path: this runs outside the sandbox, and a command could have
+	// put its own "ps" on PATH (Codex review of D-065)
+	out, err := exec.Command("/bin/ps", "-Ewwax", "-o", "pid=,command=").Output()
 	if err != nil {
 		return n
 	}

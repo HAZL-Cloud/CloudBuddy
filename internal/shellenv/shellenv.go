@@ -87,18 +87,20 @@ func parse(kvs []string) map[string]string {
 // does on cd. It returns a note for the user when the folder has an .envrc
 // that direnv won't load (not allowed yet), and nothing when there is no
 // direnv or no .envrc.
-func Direnv(env map[string]string, dir string) string {
-	bin, err := exec.LookPath("direnv")
-	if err != nil {
-		if p := lookIn(env["PATH"], "direnv"); p != "" {
-			bin = p
-		} else {
-			return ""
-		}
+//
+// bin is direnv's full path (found once at start-up, "" for none). With a
+// sandbox profile, direnv and the .envrc it runs work inside it, like any
+// command: a command may have changed the .envrc or a file it sources.
+func Direnv(env map[string]string, dir, bin, profile string) string {
+	if bin == "" {
+		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "export", "json")
+	if profile != "" {
+		cmd = exec.CommandContext(ctx, "/usr/bin/sandbox-exec", "-p", profile, bin, "export", "json")
+	}
 	cmd.Dir = dir
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
@@ -125,6 +127,9 @@ func Direnv(env map[string]string, dir string) string {
 	}
 	return ""
 }
+
+// Find looks for a program on a PATH value.
+func Find(path, name string) string { return lookIn(path, name) }
 
 func lookIn(path, name string) string {
 	for _, d := range strings.Split(path, ":") {

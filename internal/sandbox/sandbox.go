@@ -29,22 +29,41 @@ type Paths struct {
 	Bin     string
 	Port    int
 	ShimDir string // CloudBuddy's CLI shims (D-065): commands may run them, not change them
+	// DenyWrite are folders commands may not change: every folder on the
+	// user's PATH and where the programs CloudBuddy itself runs live (claude,
+	// direnv, the cloud CLIs). A command that could put a program there
+	// would get it run outside the sandbox later, by CloudBuddy or by the
+	// user's own terminal (Codex review of D-065).
+	DenyWrite []string
 }
 
+// startupFiles run code in the user's next shell or log-in session: a
+// command that changed them would get code run outside the sandbox.
+var startupFiles = []string{".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zlogout", ".bashrc", ".bash_profile",
+	".bash_login", ".profile", ".config/fish", "Library/LaunchAgents", ".config/direnv"}
+
+// escapes start programs outside the sandbox (through launchd, Apple
+// events, cron or a terminal multiplexer), so commands can't run them.
+var escapes = []string{"/usr/bin/open", "/usr/bin/osascript", "/bin/launchctl", "/usr/bin/crontab", "/usr/bin/at",
+	"/usr/bin/batch", "/usr/bin/screen", "/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"}
+
 // MacProfile returns a sandbox-exec (Seatbelt) profile. Since D-065 commands
-// run as they would in a terminal: network on, every file the user can reach.
-// Only self-protection remains (D-027): the agent can't read or change
-// CloudBuddy's data, the agents' settings and logins, CloudBuddy's binary and
-// shims, or call CloudBuddy's port (where it could approve its own requests).
+// run as they would in a terminal: network on, the user's files readable and
+// mostly writable. Only self-protection remains (D-027): the agent can't read
+// or change CloudBuddy's data, the agents' settings and logins, CloudBuddy's
+// binary and shims, or call CloudBuddy's port (where it could approve its own
+// requests), and it can't plant code that something outside the sandbox
+// would run later (PATH folders, shell startup files, launchd, Apple events).
 func MacProfile(p Paths) string {
 	var b strings.Builder
+	home := real(p.Home) // the sandbox matches resolved paths (/var -> /private/var)
 	b.WriteString("(version 1)\n(allow default)\n")
 	fmt.Fprintf(&b, "(deny file-read* file-write* (subpath %s))\n", quote(real(p.DataDir)))
 	for _, f := range []string{".claude/settings.json", ".claude/settings.local.json", ".claude.json", ".codex/config.toml", ".codex/rules"} {
-		fmt.Fprintf(&b, "(deny file-write* (literal %s) (subpath %s))\n", quote(filepath.Join(p.Home, f)), quote(filepath.Join(p.Home, f)))
+		fmt.Fprintf(&b, "(deny file-write* (literal %s) (subpath %s))\n", quote(filepath.Join(home, f)), quote(filepath.Join(home, f)))
 	}
 	for _, f := range []string{".claude/.credentials.json", ".codex/auth.json"} {
-		fmt.Fprintf(&b, "(deny file-read* file-write* (literal %s))\n", quote(filepath.Join(p.Home, f)))
+		fmt.Fprintf(&b, "(deny file-read* file-write* (literal %s))\n", quote(filepath.Join(home, f)))
 	}
 	if p.Bin != "" {
 		fmt.Fprintf(&b, "(deny file-write* (literal %s))\n", quote(real(p.Bin)))
@@ -52,6 +71,18 @@ func MacProfile(p Paths) string {
 	if p.ShimDir != "" {
 		fmt.Fprintf(&b, "(deny file-write* (subpath %s))\n", quote(real(p.ShimDir)))
 	}
+	for _, d := range p.DenyWrite {
+		if d != "" && d != "/" {
+			fmt.Fprintf(&b, "(deny file-write* (subpath %s))\n", quote(real(d)))
+		}
+	}
+	for _, f := range startupFiles {
+		fmt.Fprintf(&b, "(deny file-write* (literal %s) (subpath %s))\n", quote(filepath.Join(home, f)), quote(filepath.Join(home, f)))
+	}
+	for _, x := range escapes {
+		fmt.Fprintf(&b, "(deny process-exec (literal %s))\n", quote(x))
+	}
+	b.WriteString("(deny appleevent-send)\n")
 	if p.Port != 0 {
 		fmt.Fprintf(&b, "(deny network-outbound (remote ip \"localhost:%d\"))\n", p.Port)
 	}

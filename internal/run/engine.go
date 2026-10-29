@@ -48,8 +48,11 @@ type Engine struct {
 	execByShim  map[string]*execState // shim token
 	execByStep  map[string]*execState
 	stoppedBy   map[string]string // step id -> "you" | "run", for commands CloudBuddy stopped
-	shimDir     string            // CLI shims, first on every command's PATH
+	shimRoot    string            // a folder of CLI shims per run, first on every command's PATH
 	shimSock    string            // where the shims reach CloudBuddy
+	denyWrite   []string          // folders commands may not change (Protect)
+	direnvBin   string            // direnv, found once at start-up
+	loginPath   string            // the user's login-shell PATH (Protect)
 
 	pinOnce sync.Once
 	pinned  map[string]string
@@ -63,6 +66,7 @@ type Run struct {
 	ID, ConvID, Agent, Workdir string
 	Folders                    []string          // the project's other folders that still exist
 	Env                        map[string]string // the agent's environment: login shell plus direnv (D-065)
+	shimDir                    string            // this run's CLI shims
 	cancel                     context.CancelFunc
 	canary                     atomic.Bool
 	ended                      atomic.Bool
@@ -84,6 +88,9 @@ func New(cfg config.Config, st *store.Store, b *bus.Bus, adapters *recognize.Ada
 		hints: map[string]recognize.Hints{}, execByToken: map[string]*execState{}, execByShim: map[string]*execState{},
 		execByStep: map[string]*execState{}, stoppedBy: map[string]string{}}
 }
+
+// SetClaude pins the claude program CloudBuddy starts.
+func (e *Engine) SetClaude(exe string) { e.claude.Exe = exe }
 
 // UseFake makes the "fake" agent available (dev demo and tests).
 func (e *Engine) UseFake(f *agent.Fake) { e.fake = f }
@@ -240,11 +247,14 @@ func (e *Engine) drive(ctx context.Context, r *Run, c store.Conversation, prompt
 	_ = os.MkdirAll(runDir, 0o700)
 	events := make(chan agent.Event, 64)
 	// the same setup as the user's terminal in this folder (D-065)
+	// The .envrc runs inside the commands' sandbox: a command could have
+	// changed it, or a file it sources (Codex review of D-065).
 	env := e.agentEnv()
-	if note := shellenv.Direnv(env, r.Workdir); note != "" {
+	if note := shellenv.Direnv(env, r.Workdir, e.direnvBin, e.profile()); note != "" {
 		_ = e.st.AppendChat(context.Background(), r.ConvID, model.ChatItem{Type: "notice", Level: "warning", Text: note})
 	}
 	r.Env = env
+	r.shimDir = e.runShims(r)
 	opts := agent.StartOptions{RunID: r.ID, Workdir: r.Workdir, Folders: r.Folders, Prompt: prompt, SessionID: c.AgentSessionID,
 		RunDir: runDir, Brief: agent.Brief, BaseEnv: env,
 		Env: map[string]string{"CB_GATE_URL": e.cfg.GateURL(), "CB_GATE_TOKEN": e.cfg.GateToken, "CB_RUN_ID": r.ID}}
@@ -300,6 +310,9 @@ func (e *Engine) finish(r *Run, status, text string) {
 	ctx := context.Background()
 	r.ended.Store(true)
 	e.stopRunExecs(r.ID)
+	if r.shimDir != "" {
+		defer os.RemoveAll(r.shimDir)
+	}
 	_ = e.st.ExpireRunApprovals(ctx, r.ID)
 	e.mu.Lock()
 	for id, ch := range e.waiters {
