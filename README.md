@@ -75,7 +75,7 @@ Adapters are YAML files. See [docs/adapters.md](docs/adapters.md) to add one.
 
 ## Safety and its limits
 
-Read [docs/security.md](docs/security.md) before trusting CloudBuddy with production accounts. In short, CloudBuddy can't see inside code you approve to run with network (an install script, `cdk deploy`). It also can't stop cloud changes made outside the agent. Secret masking covers known formats only.
+Read [docs/security.md](docs/security.md) before trusting CloudBuddy with production accounts. In short, commands run like they do in your terminal, so what CloudBuddy can't see, it can't stop: a script that calls a cloud API through an SDK shows as one card, not each operation. It also can't stop cloud changes made outside the agent. Secret masking covers known formats only.
 
 ## Development
 
