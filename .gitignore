@@ -13,6 +13,10 @@ coverage.out
 .env.*
 *.log
 
+# private notes, kept on this computer only
+/plan_and_track.md
+/idea.txt
+
 # editors / OS
 .DS_Store
 .idea/

@@ -1,6 +1,6 @@
 # CloudBuddy safety model and threat model
 
-CloudBuddy lets an AI agent work in your projects the way Claude Code does in your own terminal, shows every step it takes as a card, and stops for your yes before anything that can't be undone. This page says how, and where that promise ends. The full reasoning, with every decision and review finding, is in `plan_and_track.md` (the current model is D-065).
+CloudBuddy lets an AI agent work in your projects the way Claude Code does in your own terminal, shows every step it takes as a card, and stops for your yes before anything that can't be undone. This page says how, and where that promise ends.
 
 ## What CloudBuddy protects against
 

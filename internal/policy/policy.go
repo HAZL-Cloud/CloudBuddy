@@ -1,7 +1,8 @@
 // Package policy decides allow, ask or deny for a recognized call. The rows
-// mirror plan_and_track.md section 4.5 and are evaluated top to bottom; the
-// first match wins. Since D-065 everything runs as it would in a terminal
-// unless it can't be undone or the user's connection rules say otherwise.
+// mirror "The rules (in order)" in docs/security.md and are evaluated top to
+// bottom; the first match wins. Since D-065 everything runs as it would in a
+// terminal unless it can't be undone or the user's connection rules say
+// otherwise.
 package policy
 
 import (
