@@ -29,6 +29,7 @@ type Paths struct {
 	Bin     string
 	Port    int
 	ShimDir string // CloudBuddy's CLI shims (D-065): commands may run them, not change them
+	DBPort  int    // CloudBuddy's database: commands can't reach it (D-027)
 	// DenyWrite are folders commands may not change: every folder on the
 	// user's PATH and where the programs CloudBuddy itself runs live (claude,
 	// direnv, the cloud CLIs). A command that could put a program there
@@ -40,12 +41,23 @@ type Paths struct {
 // startupFiles run code in the user's next shell or log-in session: a
 // command that changed them would get code run outside the sandbox.
 var startupFiles = []string{".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zlogout", ".bashrc", ".bash_profile",
-	".bash_login", ".profile", ".config/fish", "Library/LaunchAgents", ".config/direnv"}
+	".bash_login", ".profile", ".config/fish", "Library/LaunchAgents", ".config/direnv",
+	// the agents' own folders: plugins, hooks, skills and settings Claude Code
+	// loads outside the sandbox
+	".claude", ".codex",
+	// run by the user's next git command or terminal window
+	".gitconfig", ".config/git", "Library/Preferences/com.apple.Terminal.plist",
+	"Library/Preferences/com.googlecode.iterm2.plist", "Library/Application Support/iTerm2"}
+
+// controlSockets belong to terminal multiplexers and terminal apps that can
+// open a window running any command, outside the sandbox.
+var controlSockets = []string{".local/state/cmux", "Library/Application Support/iTerm2", ".local/share/wezterm",
+	".screen", ".local/share/zellij"}
 
 // escapes start programs outside the sandbox (through launchd, Apple
 // events, cron or a terminal multiplexer), so commands can't run them.
 var escapes = []string{"/usr/bin/open", "/usr/bin/osascript", "/bin/launchctl", "/usr/bin/crontab", "/usr/bin/at",
-	"/usr/bin/batch", "/usr/bin/screen", "/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"}
+	"/usr/bin/batch", "/usr/bin/screen", "/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/defaults"}
 
 // MacProfile returns a sandbox-exec (Seatbelt) profile. Since D-065 commands
 // run as they would in a terminal: network on, the user's files readable and
@@ -86,6 +98,13 @@ func MacProfile(p Paths) string {
 	if p.Port != 0 {
 		fmt.Fprintf(&b, "(deny network-outbound (remote ip \"localhost:%d\"))\n", p.Port)
 	}
+	if p.DBPort != 0 {
+		fmt.Fprintf(&b, "(deny network-outbound (remote ip \"localhost:%d\"))\n", p.DBPort)
+	}
+	for _, s := range controlSockets {
+		fmt.Fprintf(&b, "(deny network-outbound (remote unix-socket (subpath %s)))\n", quote(filepath.Join(home, s)))
+	}
+	b.WriteString("(deny network-outbound (remote unix-socket (path-regex #\"^/private/tmp/tmux-\")))\n")
 	return b.String()
 }
 

@@ -45,6 +45,7 @@ func Main(args []string) int {
 	var info struct {
 		Command, Cwd, Profile, Kind, StepID, PathPrefix string
 		Env                                             map[string]string
+		Unset                                           []string
 		Background                                      bool
 	}
 	if err := c.Post("/gate/release", map[string]any{"token": token, "cwd": cwd, "pid": os.Getpid()}, &info); err != nil {
@@ -54,12 +55,20 @@ func Main(args []string) int {
 	mark := config.Random(12)
 	env := []string{"CB_EXEC_MARK=" + mark}
 	path := os.Getenv("PATH")
+	if v, ok := info.Env["PATH"]; ok { // the folder's direnv PATH
+		path = v
+		delete(info.Env, "PATH")
+	}
+	unset := map[string]bool{}
+	for _, k := range info.Unset {
+		unset[k] = true
+	}
 	for _, kv := range os.Environ() {
 		if strings.HasPrefix(kv, "CB_") || strings.HasPrefix(kv, "PATH=") ||
 			strings.HasPrefix(kv, "AWS_PAGER=") || strings.HasPrefix(kv, "PAGER=") || strings.HasPrefix(kv, "GIT_PAGER=") {
 			continue
 		}
-		if k := kv[:max(strings.IndexByte(kv, '='), 0)]; info.Env[k] != "" {
+		if k := kv[:max(strings.IndexByte(kv, '='), 0)]; info.Env[k] != "" || unset[k] {
 			continue
 		}
 		env = append(env, kv)

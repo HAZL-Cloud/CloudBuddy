@@ -47,7 +47,9 @@ func TestUnaskedCallsDecideSafely(t *testing.T) {
 	t.Setenv(EnvToken, "")
 	t.Setenv(EnvSock, "")
 	t.Setenv(EnvExpected, filepath.Join(realDir, "aws"))
-	Decide = func(name string, args []string, cwd string) bool { return !strings.Contains(strings.Join(args, " "), " rb ") && args[1] != "rb" }
+	Decide = func(name string, args []string, cwd string) bool {
+		return !strings.Contains(strings.Join(args, " "), " rb ") && args[1] != "rb"
+	}
 	defer func() { Decide = nil }()
 	if code := Main([]string{"aws", "s3", "rb", "s3://x"}); code != 126 {
 		t.Errorf("delete without a token: exit %d", code)
