@@ -5,12 +5,14 @@
 package netlog
 
 import (
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -35,7 +37,7 @@ func Start() (*Log, error) {
 		return nil, err
 	}
 	l := &Log{ln: ln, hits: map[string]int{},
-		tr: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 30 * time.Second}).DialContext,
+		tr: &http.Transport{Proxy: nil, DialContext: dialer.DialContext,
 			ForceAttemptHTTP2: false, MaxIdleConns: 10, IdleConnTimeout: 30 * time.Second}}
 	l.srv = &http.Server{Handler: l, ReadHeaderTimeout: 30 * time.Second}
 	go func() { _ = l.srv.Serve(ln) }()
@@ -116,7 +118,7 @@ func (l *Log) tunnel(w http.ResponseWriter, r *http.Request) {
 		target += ":443"
 	}
 	l.note(target, "443")
-	up, err := net.DialTimeout("tcp", target, 30*time.Second)
+	up, err := dialer.DialContext(r.Context(), "tcp", target)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -161,6 +163,30 @@ func (f flushWriter) Write(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+// errLocal: the proxy never connects to this computer. It runs inside
+// CloudBuddy, outside the command's sandbox, so forwarding to a local
+// address would let a command reach CloudBuddy's own port (and approve its
+// own requests) around the sandbox's rule (D-027). Clients skip the proxy
+// for local addresses anyway (NO_PROXY).
+var errLocal = errors.New("CloudBuddy's network log doesn't connect to this computer")
+
+// dialer checks the address it actually connects to, after DNS, so a name
+// that resolves to 127.0.0.1 is refused too.
+var dialer = &net.Dialer{Timeout: 30 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || ((ip.IsLoopback() || ip.IsUnspecified()) && !allowLocalForTests) {
+		return errLocal
+	}
+	return nil
+}}
+
+// allowLocalForTests lets the tests forward to local test servers.
+var allowLocalForTests = false
 
 // Summary is the card text: "api.supabase.com ×3, hazl.ca".
 func Summary(hits []Hit, max int) string {
