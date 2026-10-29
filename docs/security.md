@@ -35,7 +35,7 @@ It protects against:
 8. **Project or third-party code with network asks** (install scripts, `cdk deploy`, `terraform apply`), with a warning that CloudBuddy can't see inside.
 9. A change where CloudBuddy can't tell the account asks.
 10. "Ask before every change" asks.
-11. Anything only guessed, opaque, or using files outside the project folder asks. That includes shell tricks, nested shells, unusual environment variables, curl config files and uploads.
+11. Anything only guessed, opaque, or using files outside the project folder asks. That includes shell tricks, nested shells, unusual environment variables, curl config files and uploads, and a `cd` that leaves the project or goes somewhere CloudBuddy can't place (`cd ~`, `cd -`, a variable, a folder that isn't there). Simple text tools such as `head`, `grep` and `jq` may share a command with a cloud CLI, whether or not the agent asked for network.
 12. **Only reviewed rules run without asking:**
     - reads that a reviewed rule or reviewed read verb covers (not ones that mint credentials or reveal secrets);
     - creates and changes that a hand-written adapter rule marks as reviewed: reversible, no money, no people.

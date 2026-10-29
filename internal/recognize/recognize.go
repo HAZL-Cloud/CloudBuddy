@@ -378,6 +378,11 @@ func externalFiles(segs []segment, cwd string, env Env) []string {
 	var out []string
 	roots := append(env.projectFolders(), cwd, "/tmp", "/private/tmp", "/var/folders", "/private/var/folders", "/dev/null", "/dev/stdin", "/dev/stdout")
 	for _, s := range segs {
+		if s.Prog == "cd" {
+			if t, outside := cdUnplaced(s.Args, cwd); outside {
+				out = append(out, "cd "+t)
+			}
+		}
 		for _, a := range s.Args {
 			for _, cand := range pathCandidates(a) {
 				p := cand
@@ -418,6 +423,47 @@ func externalFiles(segs []segment, cwd string, env Env) []string {
 		}
 	}
 	return dedupe(out)
+}
+
+// cdUnplaced reports whether a cd in a network command moves somewhere
+// CloudBuddy can't place inside the project, so the relative paths after it
+// can't be checked: no target (home), -, ~ or ~user, a variable, a directory
+// stack entry, zsh's two-word form, or a folder that isn't in the working
+// folder (CDPATH could send it elsewhere). Absolute, ~/ and ../ targets are
+// checked as paths by externalFiles.
+func cdUnplaced(args []string, cwd string) (string, bool) {
+	var targets []string
+	for i, a := range args {
+		if a == "--" {
+			targets = append(targets, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(a, "-") && a != "-" {
+			continue // -L, -P, -q, -s; a -2 stack entry leaves no target
+		}
+		targets = append(targets, a)
+	}
+	switch {
+	case len(targets) == 0:
+		return "~", true
+	case len(targets) > 1:
+		return strings.Join(targets, " "), true
+	}
+	t := targets[0]
+	if t == "-" || strings.HasPrefix(t, "+") || (strings.HasPrefix(t, "~") && !strings.HasPrefix(t, "~/")) ||
+		(strings.Contains(t, "$") && !strings.HasPrefix(t, "$HOME/")) {
+		return t, true
+	}
+	if filepath.IsAbs(t) || strings.HasPrefix(t, "~/") || strings.HasPrefix(t, "$HOME/") {
+		return t, false
+	}
+	if !filepath.IsAbs(cwd) {
+		return t, true
+	}
+	if fi, err := os.Stat(filepath.Join(cwd, t)); err != nil || !fi.IsDir() {
+		return t, true
+	}
+	return t, false
 }
 
 // linksOutside walks a folder (up to 5,000 entries) for symlinks that point
@@ -521,10 +567,12 @@ func segmentDraft(s segment, c Call, env Env, adapters *Adapters) Draft {
 		}
 		return d
 	}
-	// Anything else runs inside the no-network sandbox unless it asks for network.
+	// Anything else runs inside the no-network sandbox unless it asks for
+	// network. The text tools a network command may contain (pureSegment)
+	// stay local reads, as they do beside a cloud CLI that didn't ask.
 	d := Draft{Kind: "local", Provider: "Local", Product: "Shell", Action: model.ActionRead, ReviewedRead: true, Identity: Identity{Resolved: true}}
 	d.by("local")
-	if c.WantsNetwork {
+	if c.WantsNetwork && !pureSegment(s, env) {
 		d.Action, d.ReviewedRead, d.Network = model.ActionUnknown, false, "B"
 	}
 	return d
