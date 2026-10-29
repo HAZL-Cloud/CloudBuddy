@@ -115,9 +115,10 @@ interface Connection {
 | GET | `/api/conversations` | | `ConversationSummary[]` (newest first) |
 | POST | `/api/conversations` | `{ text, projectId? }` | `{ id }` (starts the first run). The agent comes from Settings. With `projectId`, the folders are the project's; without it, the folder from Settings. `400 {"error":"no_folder"}` when there is neither. `agent` and `workdir` may also be given, to override Settings (tests); `workdir` together with `projectId` is a `400`. |
 | GET | `/api/conversations/:id` | | `ConversationDetail` |
-| POST | `/api/conversations/:id/messages` | `{ text }` | `202` (starts a run) / `409` if a run is active |
+| POST | `/api/conversations/:id/messages` | `{ text }` | `202` (starts a run) / `409` if a run is active, or with a message when the chat uses Codex, which is coming soon (D-066) |
 | POST | `/api/conversations/:id/stop` | | `202` |
 | POST | `/api/approvals/:id` | `{ decision: "approve" \| "deny" }` | `200 Step` / `409 {"error":"not_pending"}` |
+| POST | `/api/steps/:id/stop` | | `202` stops the step's running command, such as a log tail (D-065) / `409 {"error":"not_running"}` |
 | GET | `/api/settings` | | `Settings` |
 | PUT | `/api/settings` | `Settings` | `Settings` (the folder resolved) / `400` with a message for people |
 | POST | `/api/pick-folder` | `{ start? }` | Opens the computer's own folder chooser (D-058) and waits: `{ path }`, or `{ cancelled: true }`. `409 busy` while one is open; `501 no_picker` when this computer has none (Linux without zenity or kdialog). Nothing is saved; the path is checked where it is used. |
