@@ -131,7 +131,6 @@ export interface Settings {
 }
 
 export interface Session {
-  csrfToken: string
   version: string
   agents: Agent[]
 }

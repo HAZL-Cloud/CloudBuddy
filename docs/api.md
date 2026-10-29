@@ -6,11 +6,10 @@ All JSON. Times are RFC 3339 strings. IDs are strings.
 ## Access
 
 - The server listens on `127.0.0.1:7420`.
-- On start it opens the browser at `http://127.0.0.1:7420/launch/<one-time code>`. That URL sets an HttpOnly, `SameSite=Strict` session cookie (`cb_session`) and redirects to `/`, the landing page. The app itself is at `/app` (D-060); any other path serves the same `index.html`, and the page picks what to show from the path. The code works once and expires after 60 seconds.
-- `GET /api/session` (cookie required) returns `{ csrfToken, version, agents: Agent[] }`. The app keeps `csrfToken` in memory only.
-- Every non-GET request must send header `X-CB-CSRF: <csrfToken>` and a matching `Origin`.
-- Without a valid cookie every `/api` call returns `401 {"error":"not_signed_in"}`. The app then shows: "Open CloudBuddy from the link it printed in your terminal."
-- In dev, Vite runs on `127.0.0.1:5173` and proxies `/api`, `/launch` and `/stream` to `127.0.0.1:7420`. The server accepts both origins only when started with `--dev`.
+- On start it opens the browser at `http://127.0.0.1:7420/`, the landing page. The app itself is at `/app` (D-060); any other path serves the same `index.html`, and the page picks what to show from the path.
+- No sign-in, cookie or token (D-063). Requests must name the server's own host (`Host` is checked exactly, which blocks DNS rebinding), and every non-GET request must carry a matching `Origin`, so other websites can't change anything.
+- `GET /api/session` returns `{ version, agents: Agent[] }`.
+- In dev, Vite runs on `127.0.0.1:5173` and proxies `/api` and `/stream` to `127.0.0.1:7420`. The server accepts both origins only when started with `--dev`.
 
 ## Types
 
@@ -112,7 +111,7 @@ interface Connection {
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | `/api/session` | | `{ csrfToken, version, agents }` |
+| GET | `/api/session` | | `{ version, agents }` |
 | GET | `/api/conversations` | | `ConversationSummary[]` (newest first) |
 | POST | `/api/conversations` | `{ text, projectId? }` | `{ id }` (starts the first run). The agent comes from Settings. With `projectId`, the folders are the project's; without it, the folder from Settings. `400 {"error":"no_folder"}` when there is neither. `agent` and `workdir` may also be given, to override Settings (tests); `workdir` together with `projectId` is a `400`. |
 | GET | `/api/conversations/:id` | | `ConversationDetail` |

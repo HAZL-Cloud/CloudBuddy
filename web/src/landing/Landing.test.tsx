@@ -67,6 +67,6 @@ describe('which page a path opens', () => {
     expect(isAppPath('/app/settings')).toBe(true)
     expect(isAppPath('/')).toBe(false)
     expect(isAppPath('/apple')).toBe(false)
-    expect(isAppPath('/launch/abc')).toBe(false)
+    expect(isAppPath('/settings')).toBe(false)
   })
 })

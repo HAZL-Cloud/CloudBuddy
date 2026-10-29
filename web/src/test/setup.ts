@@ -1,7 +1,6 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
 import { afterEach, beforeEach } from 'vitest'
-import { resetApiForTests } from '../api'
 import { configureMock, resetMock } from '../mock/mockApi'
 
 afterEach(() => cleanup())
@@ -10,9 +9,8 @@ afterEach(() => cleanup())
 beforeEach(() => {
   window.localStorage.clear()
   delete document.documentElement.dataset.theme
-  resetApiForTests()
   resetMock()
-  configureMock({ speed: 0, signedIn: true })
+  configureMock({ speed: 0 })
 })
 
 // jsdom has no layout engine. These stand-ins give React Flow and our size hooks something to measure.

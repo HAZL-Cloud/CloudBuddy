@@ -2,7 +2,7 @@
 // through the real gate and never runs a command. Saves a screenshot each time the screen changes.
 //
 //   bin/cloudbuddy serve --no-open --fake testdata/scenarios/demo.json   (use a throwaway CLOUDBUDDY_DB)
-//   node promo/capture.mjs <launch link> <working folder for the chat>
+//   node promo/capture.mjs <the address it printed> <working folder for the chat>
 //
 // The demo agent is labelled "Claude Code" on screen, and the folder and port read as the defaults.
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -10,19 +10,19 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openChrome, sleep } from './lib/chrome.mjs'
 
-const [, , launch, workdir] = process.argv
-if (!launch || !workdir) throw new Error('usage: node promo/capture.mjs <launch link> <working folder>')
+const [, , address, workdir] = process.argv
+if (!address || !workdir) throw new Error('usage: node promo/capture.mjs <address> <working folder>')
 const here = dirname(fileURLToPath(import.meta.url))
 const out = join(here, 'footage')
 rmSync(out, { recursive: true, force: true })
 mkdirSync(out, { recursive: true })
-const origin = new URL(launch).origin
+const origin = new URL(address).origin
 
 const RELABEL = [
   ['Demo agent', 'Claude Code'],
   ['demo-replay', 'Opus 5.5'],
   [workdir, '~/code/shipyard-web'],
-  [new URL(launch).port, '7420'],
+  [new URL(address).port, '7420'],
 ]
 // Runs in every page before its own scripts: dark theme, and the labels above, kept up to date as React renders.
 // (document.documentElement can still be missing when this runs, so everything waits for it.)
@@ -84,14 +84,13 @@ async function follow(label, limit = 45000) {
 
 try {
   await page.send('Page.addScriptToEvaluateOnNewDocument', { source: PRELUDE })
-  await page.goto(launch, 2500)
+  await page.goto(`${origin}/`, 2500)
   await snap('landing')
 
   // Settings for new chats: the demo agent, working in the given folder.
   await page.goto(`${origin}/app`, 2500)
   const saved = await page.eval(`(async () => {
-    const s = await (await fetch('/api/session')).json();
-    const r = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CB-CSRF': s.csrfToken }, body: JSON.stringify({ agent: 'fake', folder: ${JSON.stringify(workdir)} }) });
+    const r = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent: 'fake', folder: ${JSON.stringify(workdir)} }) });
     return r.status;
   })()`)
   if (saved !== 200) throw new Error(`saving settings: ${saved}`)

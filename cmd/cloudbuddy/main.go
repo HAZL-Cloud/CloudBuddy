@@ -148,8 +148,8 @@ func serve(args []string) int {
 			log.Println(err)
 		}
 	}()
-	url := fmt.Sprintf("http://127.0.0.1:%d/launch/%s", cfg.Port, srv.NewLaunchCode())
-	fmt.Printf("\nCloudBuddy %s is running.\nOpen: %s\n(The link works once and expires in 60 seconds. Restart CloudBuddy for a new one.)\n\n", config.Version, url)
+	url := fmt.Sprintf("http://127.0.0.1:%d/", cfg.Port)
+	fmt.Printf("\nCloudBuddy %s is running.\nOpen: %s\n\n", config.Version, url)
 	if !*noOpen {
 		openBrowser(url)
 	}

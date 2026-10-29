@@ -14,7 +14,7 @@ You need Node 20+, ffmpeg and Google Chrome.
    CLOUDBUDDY_PORT=7421 CLOUDBUDDY_HOME=/tmp/cb-promo \
    CLOUDBUDDY_DB="postgres://cloudbuddy:cloudbuddy@127.0.0.1:54329/<empty database>?sslmode=disable" \
    bin/cloudbuddy serve --no-open --fake testdata/scenarios/demo.json
-   node promo/capture.mjs <the launch link it printed> <any empty folder>
+   node promo/capture.mjs http://127.0.0.1:7421 <any empty folder>
    ```
 
    This writes `promo/footage/`. On screen the demo agent reads "Claude Code", and the folder and port read `~/code/shipyard-web` and 7420. Don't film the Connections page: it shows the real logins on your computer.

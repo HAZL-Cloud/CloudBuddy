@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -32,7 +31,6 @@ type env struct {
 	base   string
 	srv    *Server
 	client *http.Client
-	csrf   string
 	work   string
 }
 
@@ -81,9 +79,7 @@ func newEnv(t *testing.T, scenario string) *env {
 			c.Close(ctx)
 		}
 	})
-	jar, _ := cookiejar.New(nil)
-	e := &env{t: t, base: fmt.Sprintf("http://127.0.0.1:%d", cfg.Port), srv: srv, work: work,
-		client: &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	e := &env{t: t, base: fmt.Sprintf("http://127.0.0.1:%d", cfg.Port), srv: srv, work: work, client: &http.Client{}}
 	return e
 }
 
@@ -97,7 +93,6 @@ func (e *env) do(method, path string, body any, hdr map[string]string) (int, []b
 	req.Header.Set("Content-Type", "application/json")
 	if method != "GET" {
 		req.Header.Set("Origin", e.base)
-		req.Header.Set("X-CB-CSRF", e.csrf)
 	}
 	for k, v := range hdr {
 		if v == "" {
@@ -113,21 +108,6 @@ func (e *env) do(method, path string, body any, hdr map[string]string) (int, []b
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, b
-}
-
-func (e *env) signIn() {
-	code := e.srv.NewLaunchCode()
-	st, _ := e.do("GET", "/launch/"+code, nil, nil)
-	if st != http.StatusFound {
-		e.t.Fatalf("launch: %d", st)
-	}
-	st, b := e.do("GET", "/api/session", nil, nil)
-	if st != 200 {
-		e.t.Fatalf("session: %d %s", st, b)
-	}
-	var s struct{ CsrfToken string }
-	_ = json.Unmarshal(b, &s)
-	e.csrf = s.CsrfToken
 }
 
 func (e *env) detail(id string) model.ConversationDetail {
@@ -166,7 +146,6 @@ func waiting(d model.ConversationDetail) *model.Step {
 
 func TestDemoRunEndToEnd(t *testing.T) {
 	e := newEnv(t, filepath.Join(repoRoot(), "testdata", "scenarios", "demo.json"))
-	e.signIn()
 	st, b := e.do("POST", "/api/conversations", map[string]string{"agent": "fake", "workdir": e.work, "text": "Deploy the site and clean up"}, nil)
 	if st != 200 {
 		t.Fatalf("create: %d %s", st, b)
@@ -275,19 +254,10 @@ func TestDemoRunEndToEnd(t *testing.T) {
 
 func TestLocalSecurity(t *testing.T) {
 	e := newEnv(t, filepath.Join(repoRoot(), "testdata", "scenarios", "demo.json"))
-	// no cookie
-	if st, _ := e.do("GET", "/api/conversations", nil, nil); st != 401 {
-		t.Errorf("no cookie: %d", st)
+	// no sign-in: the browser API answers without a cookie or launch link (D-063)
+	if st, b := e.do("GET", "/api/conversations", nil, nil); st != 200 {
+		t.Errorf("no sign-in: %d %s", st, b)
 	}
-	// launch code works once
-	code := e.srv.NewLaunchCode()
-	if st, _ := e.do("GET", "/launch/"+code, nil, nil); st != 302 {
-		t.Errorf("launch: %d", st)
-	}
-	if st, _ := e.do("GET", "/launch/"+code, nil, nil); st != 403 {
-		t.Errorf("launch code reused: %d", st)
-	}
-	e.signIn()
 	// wrong Host (DNS rebinding)
 	req, _ := http.NewRequest("GET", e.base+"/api/conversations", nil)
 	req.Host = "evil.example.com"
@@ -295,7 +265,7 @@ func TestLocalSecurity(t *testing.T) {
 	if resp.StatusCode != http.StatusMisdirectedRequest {
 		t.Errorf("wrong host: %d", resp.StatusCode)
 	}
-	// cross-origin POST, missing Origin, bad CSRF
+	// cross-origin POST, missing Origin
 	body := map[string]string{"decision": "approve"}
 	if st, _ := e.do("POST", "/api/approvals/x", body, map[string]string{"Origin": "https://evil.example.com"}); st != 403 {
 		t.Errorf("cross-origin post: %d", st)
@@ -303,10 +273,7 @@ func TestLocalSecurity(t *testing.T) {
 	if st, _ := e.do("POST", "/api/approvals/x", body, map[string]string{"Origin": ""}); st != 403 {
 		t.Errorf("post without origin: %d", st)
 	}
-	if st, _ := e.do("POST", "/api/approvals/x", body, map[string]string{"X-CB-CSRF": "wrong"}); st != 403 {
-		t.Errorf("bad csrf: %d", st)
-	}
-	// gate endpoints need the gate secret, and the browser session isn't it
+	// gate endpoints need the gate secret
 	if st, _ := e.do("POST", "/gate/release", map[string]string{"token": "x"}, nil); st != 403 {
 		t.Errorf("gate without secret: %d", st)
 	}
@@ -327,7 +294,6 @@ func TestLocalSecurity(t *testing.T) {
 // A Connections rule changes what happens to the next step (Phase 6 exit).
 func TestConnectionRuleApplies(t *testing.T) {
 	e := newEnv(t, filepath.Join(repoRoot(), "testdata", "scenarios", "demo.json"))
-	e.signIn()
 	st := e.srv.eng.Store()
 	if err := st.SaveConnections(context.Background(), []model.Connection{
 		{ID: "cli:aws", Kind: "cli", Name: "AWS", Mark: "AW", How: "aws", Adapter: "builtin", Supported: true},
@@ -380,7 +346,6 @@ func TestConnectionRuleApplies(t *testing.T) {
 
 func TestProjectsAndSettings(t *testing.T) {
 	e := newEnv(t, filepath.Join(repoRoot(), "testdata", "scenarios", "demo.json"))
-	e.signIn()
 	real := func(p string) string { r, _ := filepath.EvalSymlinks(p); return r }
 	other := t.TempDir()
 
@@ -394,9 +359,6 @@ func TestProjectsAndSettings(t *testing.T) {
 	}
 	if st, b := e.do("PUT", "/api/settings", map[string]string{"agent": "nope", "folder": e.work}, nil); st != 400 {
 		t.Fatalf("unknown agent saved: %d %s", st, b)
-	}
-	if st, _ := e.do("PUT", "/api/settings", map[string]string{"agent": "fake", "folder": e.work}, map[string]string{"X-CB-CSRF": ""}); st != 403 {
-		t.Fatalf("settings saved without the CSRF header: %d", st)
 	}
 	if st, b := e.do("PUT", "/api/settings", map[string]string{"agent": "fake", "folder": e.work}, nil); st != 200 || !strings.Contains(string(b), real(e.work)) {
 		t.Fatalf("save settings: %d %s", st, b)
@@ -441,9 +403,6 @@ func TestProjectsAndSettings(t *testing.T) {
 	if st, _ := e.do("PUT", "/api/projects/pj_missing", map[string]any{"name": "x", "folders": []string{e.work}}, nil); st != 404 {
 		t.Fatalf("update of a missing project: %d", st)
 	}
-	if st, _ := e.do("DELETE", "/api/projects/"+p.ID, nil, map[string]string{"X-CB-CSRF": ""}); st != 403 {
-		t.Fatalf("delete without the CSRF header: %d", st)
-	}
 	if st, _ := e.do("DELETE", "/api/projects/"+p.ID, nil, map[string]string{"Origin": "http://evil.example"}); st != 403 {
 		t.Fatalf("delete from another origin: %d", st)
 	}
@@ -466,7 +425,6 @@ func TestProjectsAndSettings(t *testing.T) {
 
 func TestPickFolder(t *testing.T) {
 	e := newEnv(t, filepath.Join(repoRoot(), "testdata", "scenarios", "demo.json"))
-	e.signIn()
 	var gotStart string
 	answer := func(path string, err error) {
 		e.srv.pick = func(_ context.Context, _, start string) (string, error) { gotStart = start; return path, err }
@@ -490,11 +448,8 @@ func TestPickFolder(t *testing.T) {
 	if st, b := e.do("POST", "/api/pick-folder", nil, nil); st != 501 || !strings.Contains(string(b), "no_picker") {
 		t.Fatalf("no chooser: %d %s", st, b)
 	}
-	// a page can't open the chooser without the CSRF header, or from another origin
+	// a page on another origin can't open the chooser
 	answer("/code/shop", nil)
-	if st, _ := e.do("POST", "/api/pick-folder", nil, map[string]string{"X-CB-CSRF": ""}); st != 403 {
-		t.Fatalf("no CSRF header: %d", st)
-	}
 	if st, _ := e.do("POST", "/api/pick-folder", nil, map[string]string{"Origin": "http://evil.example"}); st != 403 {
 		t.Fatalf("other origin: %d", st)
 	}

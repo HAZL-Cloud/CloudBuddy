@@ -6,8 +6,8 @@ import { Logo, Wordmark } from '../components/Logo'
 import { APP_PATH } from '../route'
 import { GITHUB_URL } from './links'
 
-// The landing page at / (D-060): the project's front page, for developers. No sign-in here:
-// Open CloudBuddy goes to the app, which still needs the launch link's session.
+// The landing page at / (D-060): the project's front page, for developers. No sign-in anywhere (D-063):
+// Open CloudBuddy goes straight to the app.
 export function Landing({ github = GITHUB_URL }: { github?: string }) {
   useEffect(() => {
     document.title = 'CloudBuddy · See what your agent does to your cloud'
@@ -564,7 +564,7 @@ function QuickStart({ github }: { github: string }) {
     [clone, ''],
     ['make db-up', 'PostgreSQL in Docker on 127.0.0.1:54329'],
     ['make release', 'the frontend and one binary: bin/cloudbuddy'],
-    ['bin/cloudbuddy', 'prints a one-time link and opens your browser'],
+    ['bin/cloudbuddy', 'opens http://127.0.0.1:7420 in your browser'],
   ]
   return (
     <Section

@@ -55,10 +55,7 @@ Approvals are **single use**. Each is tied to the exact command and the hash of 
 ## Local security
 
 - The server listens on `127.0.0.1` only. It checks the `Host` header exactly (this blocks DNS rebinding) and sends no CORS headers.
-- **Browser sign-in:**
-  - CloudBuddy prints a one-time launch link that expires after 60 seconds.
-  - The link becomes an HttpOnly, `SameSite=Strict` cookie.
-  - Every change also needs a CSRF header and a matching `Origin`.
+- **No browser sign-in** (D-063). Every change needs a matching `Origin`, so other websites can't approve or change anything. Other programs running on your computer could call the API. The agent can't: its commands are kept away from CloudBuddy's port and data folder.
 - **Helper programs** (hook, exec wrapper, MCP gateway) use a separate secret. It can submit requests, but it can't approve anything.
 - The frontend is served with a strict Content Security Policy, and all agent and tool text is shown as plain text.
 

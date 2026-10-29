@@ -13,15 +13,6 @@ const openApp = async () => {
   return view
 }
 
-describe('signing in', () => {
-  it('shows one calm message when the server says you are not signed in', async () => {
-    configureMock({ signedIn: false })
-    renderWithProviders(<App />)
-    expect(await screen.findByText('Open CloudBuddy from the link it printed in your terminal.')).toBeInTheDocument()
-    expect(screen.queryByRole('complementary', { name: 'Navigation' })).toBeNull()
-  })
-})
-
 describe('the sidebar', () => {
   it('lists the chats with their status', async () => {
     renderWithProviders(<App />)

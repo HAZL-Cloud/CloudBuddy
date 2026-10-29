@@ -1,12 +1,10 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError } from './api'
-import { useSignedOut } from './auth'
 import { CanvasPanel, type FocusRequest } from './components/CanvasPanel'
 import { ChatPanel, type Draft } from './components/ChatPanel'
 import { ConnectionsPage } from './components/ConnectionsPage'
 import { Icon } from './components/Icon'
-import { NotSignedIn } from './components/NotSignedIn'
 import { ProjectDialog } from './components/ProjectDialog'
 import { SettingsPage } from './components/SettingsPage'
 import { Sidebar, type NavKey, type Page } from './components/Sidebar'
@@ -22,10 +20,6 @@ const NO_CONVERSATIONS: ConversationSummary[] = []
 const NO_PROJECTS: Project[] = []
 
 export function App() {
-  return useSignedOut() ? <NotSignedIn /> : <Shell />
-}
-
-function Shell() {
   const toast = useToast()
   const client = useQueryClient()
   const narrow = useMediaQuery('(max-width: 1100px)')

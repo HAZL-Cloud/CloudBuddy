@@ -36,7 +36,7 @@ make release        # builds the frontend and a single binary: bin/cloudbuddy
 bin/cloudbuddy      # opens your browser
 ```
 
-CloudBuddy prints a one-time link and opens it. The link signs your browser in, works once, and opens the landing page; **Open CloudBuddy** takes you to the app at `/app`. To open CloudBuddy again later, restart it for a new link.
+CloudBuddy opens `http://127.0.0.1:7420` in your browser, the landing page. **Open CloudBuddy** takes you to the app at `/app`. There is no sign-in: it runs on your own computer, and you can open the address again any time while it's running.
 
 Pick your agent in **Settings**, add a project (its name and folders, picked with **Choose…**) with **+** next to Projects, then click **New chat** and describe the job. The first message starts the chat.
 

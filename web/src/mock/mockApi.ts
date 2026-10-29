@@ -16,9 +16,7 @@ import type {
 import { seedConnections, seedConversations, seedProjects, seedSettings } from './data'
 
 // A stand-in for the Go server, used when VITE_MOCK=1 and by the tests. It answers the same paths with the same
-// status codes as docs/api.md, so the real client code (CSRF header, 401, 409) is exercised too.
-
-export const MOCK_CSRF = 'mock-csrf-token'
+// status codes as docs/api.md, so the real client code (errors such as 404 and 409) is exercised too.
 
 const AGENTS: Agent[] = [
   { name: 'claude', label: 'Claude Code', version: '2.1.311', available: true },
@@ -30,7 +28,6 @@ interface MockState {
   projects: Project[]
   settings: Settings
   connections: ConnectionsResponse
-  signedIn: boolean
   /** Multiplies every delay. Tests set it to 0. */
   speed: number
   counter: number
@@ -44,7 +41,6 @@ const state: MockState = {
   projects: seedProjects(),
   settings: seedSettings(),
   connections: seedConnections(),
-  signedIn: true,
   speed: 1,
   counter: 0,
   picker: 'pick',
@@ -53,9 +49,8 @@ const state: MockState = {
 const timers = new Set<ReturnType<typeof setTimeout>>()
 const listeners = new Set<(ev: StreamEvent) => void>()
 
-export function configureMock(opts: { speed?: number; signedIn?: boolean; picker?: MockState['picker'] }): void {
+export function configureMock(opts: { speed?: number; picker?: MockState['picker'] }): void {
   if (opts.speed !== undefined) state.speed = opts.speed
-  if (opts.signedIn !== undefined) state.signedIn = opts.signedIn
   if (opts.picker !== undefined) state.picker = opts.picker
 }
 
@@ -73,7 +68,6 @@ export function resetMock(): void {
   state.projects = seedProjects()
   state.settings = seedSettings()
   state.connections = seedConnections()
-  state.signedIn = true
   state.picker = 'pick'
   state.picks = 0
   emit({ type: 'conversations' })
@@ -351,18 +345,15 @@ export interface MockRequest {
   method: string
   path: string
   body: unknown
-  csrf: string | null
 }
 
-export async function mockRequest({ method, path, body, csrf }: MockRequest): Promise<unknown> {
+export async function mockRequest({ method, path, body }: MockRequest): Promise<unknown> {
   await new Promise((resolve) => setTimeout(resolve, 40 * state.speed))
-  if (!state.signedIn) throw new ApiError(401, 'not_signed_in')
-  if (method !== 'GET' && csrf !== MOCK_CSRF) throw new ApiError(403, 'bad_csrf')
   const b = (body ?? {}) as Record<string, unknown>
   const route = `${method} ${path}`
   let m: RegExpMatchArray | null
 
-  if (route === 'GET /api/session') return { csrfToken: MOCK_CSRF, version: '0.1.0-mock', agents: clone(AGENTS) }
+  if (route === 'GET /api/session') return { version: '0.1.0-mock', agents: clone(AGENTS) }
   if (route === 'GET /api/conversations') {
     return clone([...state.convs].sort((a, c) => c.updatedAt.localeCompare(a.updatedAt)).map(summary))
   }

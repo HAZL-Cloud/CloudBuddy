@@ -1,4 +1,3 @@
-import { setSignedOut } from './auth'
 import type {
   ConnectionsResponse,
   Connection,
@@ -24,26 +23,16 @@ export class ApiError extends Error {
   }
 }
 
-export class NotSignedInError extends ApiError {
-  constructor() {
-    super(401, 'not_signed_in')
-    this.name = 'NotSignedInError'
-  }
-}
-
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
-// The CSRF token lives in memory only (api.md). It is fetched once and sent on every non-GET request.
-let sessionRequest: Promise<Session> | null = null
-
-async function send(method: Method, path: string, body: unknown, csrf: string | null): Promise<unknown> {
+// No sign-in (D-063): the server only checks that writes come from its own page (the Origin header the browser adds).
+async function call<T>(method: Method, path: string, body?: unknown): Promise<T> {
   // The check sits right at the import so a production build drops the mock code entirely.
   if (import.meta.env.VITE_MOCK === '1') {
     const { mockRequest } = await import('./mock/mockApi')
-    return mockRequest({ method, path, body, csrf })
+    return (await mockRequest({ method, path, body })) as T
   }
   const headers: Record<string, string> = { Accept: 'application/json' }
-  if (csrf) headers['X-CB-CSRF'] = csrf
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   const res = await fetch(path, {
     method,
@@ -62,47 +51,13 @@ async function send(method: Method, path: string, body: unknown, csrf: string | 
     throw new ApiError(res.status, code)
   }
   const text = await res.text()
-  return text ? (JSON.parse(text) as unknown) : undefined
-}
-
-async function call<T>(method: Method, path: string, body?: unknown, retried = false): Promise<T> {
-  try {
-    const csrf = method === 'GET' ? null : (await getSession()).csrfToken
-    return (await send(method, path, body, csrf)) as T
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 401) {
-      setSignedOut(true)
-      throw new NotSignedInError()
-    }
-    // A 403 on a write usually means the server restarted and issued a new token: fetch it once and retry.
-    if (err instanceof ApiError && err.status === 403 && method !== 'GET' && !retried) {
-      sessionRequest = null
-      return call<T>(method, path, body, true)
-    }
-    throw err
-  }
-}
-
-export function getSession(): Promise<Session> {
-  if (sessionRequest) return sessionRequest
-  const request = send('GET', '/api/session', undefined, null)
-    .then((data) => data as Session)
-    .catch((err: unknown) => {
-      sessionRequest = null
-      if (err instanceof ApiError && err.status === 401) {
-        setSignedOut(true)
-        throw new NotSignedInError()
-      }
-      throw err
-    })
-  sessionRequest = request
-  return request
+  return (text ? JSON.parse(text) : undefined) as T
 }
 
 const enc = encodeURIComponent
 
 export const api = {
-  session: getSession,
+  session: () => call<Session>('GET', '/api/session'),
   conversations: () => call<ConversationSummary[]>('GET', '/api/conversations'),
   conversation: (id: string) => call<ConversationDetail>('GET', `/api/conversations/${enc(id)}`),
   /** The agent comes from Settings; the folders from the project, or from Settings outside a project. */
@@ -122,10 +77,4 @@ export const api = {
   connections: () => call<ConnectionsResponse>('GET', '/api/connections'),
   scanConnections: () => call<ConnectionsResponse>('POST', '/api/connections/scan'),
   setRule: (id: string, rule: Rule) => call<Connection>('PUT', `/api/connections/${enc(id)}/rule`, { rule }),
-}
-
-// Tests start each case with a clean session.
-export function resetApiForTests(): void {
-  sessionRequest = null
-  setSignedOut(false)
 }

@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,53 +43,37 @@ type Server struct {
 	// pick opens the computer's folder chooser (D-058); tests replace it.
 	pick    func(ctx context.Context, prompt, start string) (string, error)
 	picking atomic.Bool
-
-	mu       sync.Mutex
-	launch   map[string]time.Time // one-time launch codes
-	sessions map[string]string    // session cookie -> csrf token
 }
 
 func New(cfg config.Config, eng *run.Engine, b *bus.Bus, web fs.FS, agents func() []Agent, scan func(context.Context) error) *Server {
-	s := &Server{cfg: cfg, eng: eng, bus: b, web: web, agents: agents, scan: scan, pick: picker.Folder,
-		launch: map[string]time.Time{}, sessions: map[string]string{}}
+	s := &Server{cfg: cfg, eng: eng, bus: b, web: web, agents: agents, scan: scan, pick: picker.Folder}
 	if cfg.Dev {
 		s.devPort = 5173
 	}
 	return s
 }
 
-// NewLaunchCode returns a code for the URL CloudBuddy opens in the browser.
-// It works once and expires after 60 seconds.
-func (s *Server) NewLaunchCode() string {
-	code := config.Random(16)
-	s.mu.Lock()
-	s.launch[code] = time.Now().Add(60 * time.Second)
-	s.mu.Unlock()
-	return code
-}
-
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// browser
-	mux.HandleFunc("GET /launch/{code}", s.handleLaunch)
-	mux.HandleFunc("GET /api/session", s.auth(s.handleSession))
-	mux.HandleFunc("GET /api/conversations", s.auth(s.handleList))
-	mux.HandleFunc("POST /api/conversations", s.auth(s.handleCreate))
-	mux.HandleFunc("GET /api/conversations/{id}", s.auth(s.handleDetail))
-	mux.HandleFunc("POST /api/conversations/{id}/messages", s.auth(s.handleMessage))
-	mux.HandleFunc("POST /api/conversations/{id}/stop", s.auth(s.handleStop))
-	mux.HandleFunc("POST /api/approvals/{id}", s.auth(s.handleDecide))
-	mux.HandleFunc("GET /api/settings", s.auth(s.handleSettings))
-	mux.HandleFunc("PUT /api/settings", s.auth(s.handleSaveSettings))
-	mux.HandleFunc("POST /api/pick-folder", s.auth(s.handlePickFolder))
-	mux.HandleFunc("GET /api/projects", s.auth(s.handleProjects))
-	mux.HandleFunc("POST /api/projects", s.auth(s.handleSaveProject))
-	mux.HandleFunc("PUT /api/projects/{id}", s.auth(s.handleSaveProject))
-	mux.HandleFunc("DELETE /api/projects/{id}", s.auth(s.handleDeleteProject))
-	mux.HandleFunc("GET /api/connections", s.auth(s.handleConnections))
-	mux.HandleFunc("POST /api/connections/scan", s.auth(s.handleScan))
-	mux.HandleFunc("PUT /api/connections/{id}/rule", s.auth(s.handleRule))
-	mux.HandleFunc("GET /stream", s.auth(s.handleStream))
+	mux.HandleFunc("GET /api/session", s.handleSession)
+	mux.HandleFunc("GET /api/conversations", s.handleList)
+	mux.HandleFunc("POST /api/conversations", s.handleCreate)
+	mux.HandleFunc("GET /api/conversations/{id}", s.handleDetail)
+	mux.HandleFunc("POST /api/conversations/{id}/messages", s.handleMessage)
+	mux.HandleFunc("POST /api/conversations/{id}/stop", s.handleStop)
+	mux.HandleFunc("POST /api/approvals/{id}", s.handleDecide)
+	mux.HandleFunc("GET /api/settings", s.handleSettings)
+	mux.HandleFunc("PUT /api/settings", s.handleSaveSettings)
+	mux.HandleFunc("POST /api/pick-folder", s.handlePickFolder)
+	mux.HandleFunc("GET /api/projects", s.handleProjects)
+	mux.HandleFunc("POST /api/projects", s.handleSaveProject)
+	mux.HandleFunc("PUT /api/projects/{id}", s.handleSaveProject)
+	mux.HandleFunc("DELETE /api/projects/{id}", s.handleDeleteProject)
+	mux.HandleFunc("GET /api/connections", s.handleConnections)
+	mux.HandleFunc("POST /api/connections/scan", s.handleScan)
+	mux.HandleFunc("PUT /api/connections/{id}/rule", s.handleRule)
+	mux.HandleFunc("GET /stream", s.handleStream)
 	// gate (hook, exec wrapper, MCP gateway): separate secret, can't approve
 	mux.HandleFunc("POST /gate/claude/pretool", s.gate(s.handlePreTool))
 	mux.HandleFunc("POST /gate/claude/session", s.gate(s.handleSessionStart))
@@ -154,50 +137,6 @@ func (s *Server) guard(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
-	code := r.PathValue("code")
-	s.mu.Lock()
-	exp, ok := s.launch[code]
-	delete(s.launch, code)
-	s.mu.Unlock()
-	if !ok || time.Now().After(exp) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusForbidden)
-		io.WriteString(w, `<!doctype html><meta charset="utf-8"><title>CloudBuddy</title><body style="font-family:system-ui;padding:40px">This link was already used or has expired. Run <code>cloudbuddy</code> again, or open the newest link it printed.</body>`)
-		return
-	}
-	sid := config.Random(24)
-	s.mu.Lock()
-	s.sessions[sid] = config.Random(24)
-	s.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "cb_session", Value: sid, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 30 * 24 * 3600})
-	http.Redirect(w, r, "/", http.StatusFound)
-}
-
-func (s *Server) auth(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie("cb_session")
-		if err != nil {
-			writeErr(w, http.StatusUnauthorized, "not_signed_in")
-			return
-		}
-		s.mu.Lock()
-		csrf, ok := s.sessions[c.Value]
-		s.mu.Unlock()
-		if !ok {
-			writeErr(w, http.StatusUnauthorized, "not_signed_in")
-			return
-		}
-		if r.Method != http.MethodGet && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CB-CSRF")), []byte(csrf)) != 1 {
-			writeErr(w, http.StatusForbidden, "bad_csrf")
-			return
-		}
-		h(w, r.WithContext(context.WithValue(r.Context(), csrfKey{}, csrf)))
-	}
-}
-
-type csrfKey struct{}
-
 func (s *Server) gate(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CB-Gate")), []byte(s.cfg.GateToken)) != 1 {
@@ -228,7 +167,7 @@ func readJSON(r *http.Request, v any) error {
 // ---------- browser API ----------
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"csrfToken": r.Context().Value(csrfKey{}), "version": config.Version, "agents": s.agents()})
+	writeJSON(w, 200, map[string]any{"version": config.Version, "agents": s.agents()})
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
