@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react'
+import { api } from '../api'
 import { clock } from '../format'
 import type { Decision, Step } from '../types'
 import { ACTIONS, VIA_LABELS } from '../vocab'
@@ -32,7 +33,7 @@ function genericExplanation(step: Step): string {
     step.action === 'unknown' ? "something it can't be sure of" : `a ${ACTIONS[step.action].label.toLowerCase()}`
   const guess = step.guessWord ? `: the word “${step.guessWord}” means this is ${kind}.` : '.'
   const title = step.titleSource === 'adapter' ? '' : " The title is the agent's own description."
-  return `There's no ${step.provider} adapter yet, so CloudBuddy guessed from the command${guess}${title} Steps like this ask first unless they're clearly read-only.`
+  return `There's no ${step.provider} adapter yet, so CloudBuddy guessed from the command${guess}${title} Steps like this run on their own unless they look like a delete, a payment or a message to people.`
 }
 
 const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
@@ -81,6 +82,13 @@ export function Inspector({ step, number, numbers, deciding, onDecide, onClose, 
   const asking = step.status === 'waiting' && approval?.state === 'pending'
   const mcp = step.via === 'mcp'
 
+  const stop = () => {
+    api.stopStep(step.id).then(
+      () => toast('Stopping…'),
+      () => toast('It already finished.'),
+    )
+  }
+
   const copy = () => {
     const done = () => toast('Copied.')
     const fallback = () => toast('Could not copy. Select the text and press Ctrl+C.')
@@ -110,6 +118,13 @@ export function Inspector({ step, number, numbers, deciding, onDecide, onClose, 
       {asking && (
         <div className="gate-actions">
           <DecisionButtons step={step} deciding={deciding} onDecide={onDecide} />
+        </div>
+      )}
+      {step.status === 'running' && step.via !== 'mcp' && step.via !== 'file' && (
+        <div className="gate-actions">
+          <button type="button" className="btn" onClick={stop}>
+            Stop this command
+          </button>
         </div>
       )}
       {approval && (

@@ -178,7 +178,7 @@ export function Sidebar(p: SidebarProps) {
           <div key={a.name} className="runtime">
             <span className={`dot ${a.available ? 'ok' : 'off'}`} />
             {a.label}
-            <span className="mono">{a.available ? a.version : 'not found'}</span>
+            <span className="mono">{a.comingSoon ? 'coming soon' : a.available ? a.version : 'not found'}</span>
           </div>
         ))}
         <div className="theme-row">

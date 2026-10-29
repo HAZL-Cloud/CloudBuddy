@@ -1,6 +1,7 @@
 // Package policy decides allow, ask or deny for a recognized call. The rows
 // mirror plan_and_track.md section 4.5 and are evaluated top to bottom; the
-// first match wins.
+// first match wins. Since D-065 everything runs as it would in a terminal
+// unless it can't be undone or the user's connection rules say otherwise.
 package policy
 
 import (
@@ -38,7 +39,7 @@ type Context struct {
 	CanWrapCode bool
 }
 
-// KindBWarning is shown on every approval for project code with network (D-029).
+// KindBWarning is shown on an approval for project code with network (D-029).
 const KindBWarning = "CloudBuddy can't see what this does inside. Anything it changes won't show on the canvas."
 
 func Decide(d recognize.Draft, ctx Context) Decision {
@@ -46,7 +47,10 @@ func Decide(d recognize.Draft, ctx Context) Decision {
 	if rule == "" {
 		rule = model.RuleIrreversible
 	}
-	isRead := d.Action == model.ActionRead && d.ReviewedRead
+	// A reviewed read is what a Read-only connection lets through; any read
+	// label is enough to run in live mode or under "ask before every change".
+	reviewedRead := d.Action == model.ActionRead && d.ReviewedRead
+	anyRead := d.Action == model.ActionRead
 	has := func(t model.Tag) bool {
 		for _, x := range d.Tags {
 			if x == t {
@@ -60,36 +64,27 @@ func Decide(d recognize.Draft, ctx Context) Decision {
 	if len(d.Protected) > 0 {
 		return Decision{Verdict: Deny, Row: 1, Reason: "Protected: this is CloudBuddy's own setup (" + strings.Join(d.Protected, ", ") + ")."}
 	}
-	// 2. Background work with network (D-029).
-	if d.Background && d.Network != "" {
-		return Decision{Verdict: Deny, Row: 2, Reason: "It would keep running in the background, outside CloudBuddy's view."}
+	// 2–3. Connection rules that only deny.
+	if rule == model.RuleOff && d.Kind == "cloud" {
+		return Decision{Verdict: Deny, Row: 2, Reason: d.Provider + " is turned off in Connections."}
 	}
-	// 3. Local work inside the no-network sandbox.
-	if d.Network == "" && !d.OutsideWorkdirWrite {
-		return Decision{Verdict: Allow, Row: 3}
+	if rule == model.RuleReadOnly && d.Kind == "cloud" && !reviewedRead {
+		return Decision{Verdict: Deny, Row: 3, Reason: d.Provider + " is read-only in Connections."}
 	}
-	// A file change outside the project folder is not network work, but it
-	// isn't covered by the sandbox either.
-	if d.Network == "" && d.OutsideWorkdirWrite {
-		return Decision{Verdict: Ask, Row: 3, Reason: "It changes a file outside the project folder.",
-			LossTitle: "What will happen", Loss: []string{"Changes " + d.Resource}}
-	}
-	// 4–5. Connection rules that only deny.
-	if rule == model.RuleOff {
-		return Decision{Verdict: Deny, Row: 4, Reason: d.Provider + " is turned off in Connections."}
-	}
-	if rule == model.RuleReadOnly && !isRead {
-		return Decision{Verdict: Deny, Row: 5, Reason: d.Provider + " is read-only in Connections."}
-	}
-	// Codex can't keep file rules on approved project code (D-038).
+	// 4. Codex can't keep CloudBuddy's file rules on project code with
+	// network (D-038).
 	if d.Network == "B" && !ctx.CanWrapCode {
-		return Decision{Verdict: Deny, Row: 9, Reason: "This runs project code with network access, which this agent can't do safely inside CloudBuddy. Run it yourself in a terminal if you want it."}
+		return Decision{Verdict: Deny, Row: 4, Reason: "This runs project code with network access, which this agent can't do safely inside CloudBuddy. Run it yourself in a terminal if you want it."}
 	}
-	// 6. Deletes.
+	// 5. Deletes.
 	if d.Action == model.ActionDelete {
-		return withLoss(Decision{Verdict: Ask, Row: 6, Reason: "It's a delete."}, d)
+		reason := "It's a delete."
+		if d.HiddenDelete != "" {
+			reason = "It looks like a delete (\u201c" + d.HiddenDelete + "\u201d), and CloudBuddy can't see exactly what it does."
+		}
+		return withLoss(Decision{Verdict: Ask, Row: 5, Reason: reason}, d)
 	}
-	// 7. Warning tags.
+	// 6. Warning tags.
 	var tagNames []string
 	for _, t := range []model.Tag{model.TagIrreversible, model.TagMoney, model.TagPeople} {
 		if has(t) {
@@ -97,56 +92,18 @@ func Decide(d recognize.Draft, ctx Context) Decision {
 		}
 	}
 	if len(tagNames) > 0 {
-		return withLoss(Decision{Verdict: Ask, Row: 7, Reason: "It's marked " + strings.Join(tagNames, ", ") + "."}, d)
+		return withLoss(Decision{Verdict: Ask, Row: 6, Reason: "It's marked " + strings.Join(tagNames, ", ") + "."}, d)
 	}
-	// 8. Live mode always asks (D-025).
-	if has(model.TagLive) {
-		return withLoss(Decision{Verdict: Ask, Row: 8, Reason: "It runs in live mode."}, d)
+	// 7. Live mode asks before anything but a read (D-025, D-065).
+	if has(model.TagLive) && !anyRead {
+		return withLoss(Decision{Verdict: Ask, Row: 7, Reason: "It changes something in live mode."}, d)
 	}
-	// 9. Project or third-party code with network.
-	if d.Network == "B" {
-		return Decision{Verdict: Ask, Row: 9, Reason: "It runs code with network access.", Warning: KindBWarning}
+	// 8. "Ask before every change".
+	if rule == model.RuleEvery && d.Kind == "cloud" && !anyRead {
+		return withLoss(Decision{Verdict: Ask, Row: 8, Reason: "Your rule for " + d.Provider + " asks before every change."}, d)
 	}
-	// 10. Unresolved identity on a non-read.
-	if !isRead && !d.Identity.Resolved {
-		return withLoss(Decision{Verdict: Ask, Row: 10, Reason: "CloudBuddy can't tell which account this uses (" + d.Identity.Label + ")."}, d)
-	}
-	// 11. "Ask before every change".
-	if rule == model.RuleEvery && !isRead {
-		return withLoss(Decision{Verdict: Ask, Row: 11, Reason: "Your rule for " + d.Provider + " asks before every change."}, d)
-	}
-	// Files from outside the project folder in a command with network: they
-	// could be sent anywhere (Phase 2 review).
-	if len(d.ExternalFiles) > 0 {
-		return withLoss(Decision{Verdict: Ask, Row: 12, Reason: "It uses files outside the project folder: " + strings.Join(d.ExternalFiles, ", ") + "."}, d)
-	}
-	// 12. Unknown, or only the generic layer recognized it and it isn't a reviewed read.
-	// Only reviewed rules run without asking (D-049): reviewed reads, and
-	// creates/changes a person checked are reversible with no money or people.
-	if d.Action == model.ActionUnknown || d.Opaque || (!isRead && !d.ReviewedChange) {
-		why := "CloudBuddy can't tell what this does."
-		switch {
-		case d.Opaque:
-			why = "Parts of this command can't be checked (shell tricks, uploads or variables)."
-		case onlyGeneric(d) && d.Action != model.ActionUnknown:
-			why = fmt.Sprintf("No %s adapter, and it isn't clearly read-only.", d.Provider)
-		case d.Action != model.ActionUnknown:
-			why = "No reviewed rule says this change is safe to run on its own."
-		}
-		return withLoss(Decision{Verdict: Ask, Row: 12, Reason: why}, d)
-	}
-	// 13. Everything else.
-	return Decision{Verdict: Allow, Row: 13}
-}
-
-// onlyGeneric reports whether no adapter recognized the call.
-func onlyGeneric(d recognize.Draft) bool {
-	for _, by := range d.RecognizedBy {
-		if by == "builtin" || by == "generated" {
-			return false
-		}
-	}
-	return true
+	// 9. Everything else runs, as it would in a terminal (D-065).
+	return Decision{Verdict: Allow, Row: 9}
 }
 
 func tagLabel(t model.Tag) string {

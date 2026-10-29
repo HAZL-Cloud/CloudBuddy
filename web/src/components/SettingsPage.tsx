@@ -61,12 +61,12 @@ export function SettingsPage({ agents, projects, onNewProject, onEditProject }: 
                       name="agent"
                       value={a.name}
                       checked={agent === a.name}
-                      disabled={!a.available}
+                      disabled={!a.available || a.comingSoon}
                       onChange={() => setAgent(a.name)}
                     />
                     <span className="agent-choice-text">
                       <b>{a.label}</b>
-                      <span className="mono">{a.available ? a.version : 'not found on this computer'}</span>
+                      <span className="mono">{a.comingSoon ? 'Coming soon' : a.available ? a.version : 'not found on this computer'}</span>
                     </span>
                   </label>
                 ))}

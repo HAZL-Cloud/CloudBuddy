@@ -41,10 +41,14 @@ type StartOptions struct {
 	SessionID string // continue this agent session
 	Model     string
 	RunDir    string            // per-run folder for settings files
+	BaseEnv   map[string]string // the environment to start from (D-065); empty means CloudBuddy's own
 	Env       map[string]string // added to the agent's environment
 	MCP       map[string]MCPSpec
-	Brief     string
-	Approve   Approver
+	// MCPServers are the user's own MCP servers, passed to Claude Code as they
+	// are (stdio, http, sse); its hook gates every call to them (D-065).
+	MCPServers map[string]any
+	Brief      string
+	Approve    Approver
 }
 
 // MCPSpec is how an agent starts one MCP server (always the CloudBuddy gateway).
@@ -62,18 +66,25 @@ type Driver interface {
 
 // Brief is the instruction given to every agent (plan section 4.3). It is
 // guidance; the gate and sandbox enforce what matters.
-const Brief = `You are running inside CloudBuddy, which records every cloud action you take and asks the user before anything that can't be undone.
-- Run one cloud command per tool call. Don't wrap cloud calls in scripts.
-- Give every shell command a short plain-English description of what it does.
-- Local commands run in a sandbox without network. Cloud CLI commands are routed by CloudBuddy automatically; if a command needs network, say so.
+const Brief = `You are running inside CloudBuddy, which shows every step you take as a card and asks the user before anything that can't be undone (deletes, payments, messages to people, changes in live mode).
+- Work as you would in the user's own terminal: commands have network, the project's environment and the user's CLI logins. Use the project's own scripts and make targets when they fit.
+- Give every shell command a short plain-English description of what it does; it becomes the card's title.
+- Prefer one cloud command per tool call when it's easy, so each shows as its own card.
 - If CloudBuddy or the user denies a step, don't try to do the same thing another way. Explain and ask the user.
 - Never touch ~/.cloudbuddy, CloudBuddy's port, or the agents' own settings files.`
 
-// baseEnv is the user's environment without variables that would confuse a
-// nested agent, plus extra.
-func baseEnv(extra map[string]string) []string {
+// baseEnv is the user's environment (base, or CloudBuddy's own when base is
+// empty) without variables that would confuse a nested agent, plus extra.
+func baseEnv(base, extra map[string]string) []string {
+	src := os.Environ()
+	if len(base) > 0 {
+		src = src[:0:0]
+		for k, v := range base {
+			src = append(src, k+"="+v)
+		}
+	}
 	var env []string
-	for _, kv := range os.Environ() {
+	for _, kv := range src {
 		k := kv[:strings.IndexByte(kv, '=')]
 		switch k {
 		case "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CODEX_HOME":

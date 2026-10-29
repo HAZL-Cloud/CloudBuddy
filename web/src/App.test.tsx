@@ -29,7 +29,7 @@ describe('the sidebar', () => {
     const nav = within(await screen.findByRole('complementary', { name: 'Navigation' }))
     expect(await nav.findByLabelText('1 waiting')).toBeInTheDocument()
     expect(await nav.findByText('2.1.311')).toBeInTheDocument()
-    expect(nav.getByText('0.163.0')).toBeInTheDocument()
+    expect(nav.getByText('coming soon')).toBeInTheDocument()
   })
 
   it('switches between light, dark and the computer setting, and remembers the choice', async () => {
@@ -305,16 +305,15 @@ describe('projects', () => {
 })
 
 describe('Settings', () => {
-  it('saves the agent; new chats use it', async () => {
+  it('uses Claude Code for new chats; Codex is coming soon (D-066)', async () => {
     await openApp()
     await userEvent.click(within(sidebar()).getByRole('button', { name: /Settings/ }))
     const codex = await screen.findByRole('radio', { name: /Codex/ })
     await waitFor(() => expect(screen.getByRole('radio', { name: /Claude Code/ })).toBeChecked())
-    await userEvent.click(codex)
-    await userEvent.click(screen.getByRole('button', { name: 'Save settings' }))
-    expect(await screen.findByText('Settings saved. New chats use them.')).toBeInTheDocument()
+    expect(codex).toBeDisabled()
+    expect(screen.getByText('Coming soon')).toBeInTheDocument()
     await userEvent.click(within(sidebar()).getByRole('button', { name: 'New chat' }))
-    expect(await screen.findByRole('heading', { name: 'What should Codex do?' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'What should Claude Code do?' })).toBeInTheDocument()
   })
 
   it('picks the working folder with the folder chooser', async () => {

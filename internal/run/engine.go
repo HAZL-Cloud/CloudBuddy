@@ -21,6 +21,7 @@ import (
 	"cloudbuddy/internal/mask"
 	"cloudbuddy/internal/model"
 	"cloudbuddy/internal/recognize"
+	"cloudbuddy/internal/shellenv"
 	"cloudbuddy/internal/store"
 )
 
@@ -41,9 +42,14 @@ type Engine struct {
 	hintsMu sync.Mutex
 	hints   map[string]recognize.Hints // runID/server/tool
 
-	workMu    sync.Mutex
-	workLk    map[string]*sync.RWMutex   // held while kind-B code runs in a folder (D-029)
-	heldLocks map[string][]*sync.RWMutex // release token hash -> held folder locks
+	// commands running through cloudbuddy exec (D-065)
+	execMu      sync.Mutex
+	execByToken map[string]*execState // release token hash
+	execByShim  map[string]*execState // shim token
+	execByStep  map[string]*execState
+	stoppedBy   map[string]string // step id -> "you" | "run", for commands CloudBuddy stopped
+	shimDir     string            // CLI shims, first on every command's PATH
+	shimSock    string            // where the shims reach CloudBuddy
 
 	pinOnce sync.Once
 	pinned  map[string]string
@@ -55,7 +61,8 @@ type Engine struct {
 
 type Run struct {
 	ID, ConvID, Agent, Workdir string
-	Folders                    []string // the project's other folders that still exist
+	Folders                    []string          // the project's other folders that still exist
+	Env                        map[string]string // the agent's environment: login shell plus direnv (D-065)
 	cancel                     context.CancelFunc
 	canary                     atomic.Bool
 	ended                      atomic.Bool
@@ -64,6 +71,7 @@ type Run struct {
 
 	mu        sync.Mutex
 	gated     map[string]bool     // tool keys the gate decided
+	bgSteps   map[string]bool     // step ids of background commands
 	codexPath map[string][]string // Codex file-change item -> paths
 	escalated map[string]bool     // Codex items that got network
 }
@@ -73,7 +81,8 @@ func New(cfg config.Config, st *store.Store, b *bus.Bus, adapters *recognize.Ada
 		claude: &agent.Claude{Bin: cfg.Bin, DataDir: cfg.DataDir, Home: cfg.Home},
 		codex:  &agent.Codex{DataDir: cfg.DataDir, Home: cfg.Home},
 		runs:   map[string]*Run{}, active: map[string]*Run{}, waiters: map[string]chan bool{},
-		hints: map[string]recognize.Hints{}, workLk: map[string]*sync.RWMutex{}, heldLocks: map[string][]*sync.RWMutex{}}
+		hints: map[string]recognize.Hints{}, execByToken: map[string]*execState{}, execByShim: map[string]*execState{},
+		execByStep: map[string]*execState{}, stoppedBy: map[string]string{}}
 }
 
 // UseFake makes the "fake" agent available (dev demo and tests).
@@ -107,12 +116,16 @@ func (e *Engine) env(r *Run) recognize.Env {
 		}
 	})
 	return recognize.Env{Home: e.cfg.Home, DataDir: e.cfg.DataDir, Port: e.cfg.Port, Workdir: r.Workdir, Folders: r.Folders,
-		CloudBuddyBin: e.cfg.Bin, Pinned: e.pinned}
+		CloudBuddyBin: e.cfg.Bin, Pinned: e.pinned, AgentEnv: r.Env}
 }
 
 // ---------- conversations ----------
 
 var ErrBusy = errors.New("a run is already going in this chat")
+
+// ErrCodexSoon: Codex chats are paused while CloudBuddy works like native
+// Claude Code (D-066).
+var ErrCodexSoon = errors.New("Codex support is coming soon. Start a new chat with Claude Code.")
 
 func titleFrom(text string) string {
 	t := strings.TrimSpace(strings.SplitN(text, "\n", 2)[0])
@@ -125,8 +138,9 @@ func titleFrom(text string) string {
 	return t
 }
 
+// Agents lists the agents a chat can use. Codex is coming soon (D-066).
 func (e *Engine) Agents() []string {
-	out := []string{"claude", "codex"}
+	out := []string{"claude"}
 	if e.fake != nil {
 		out = append(out, "fake")
 	}
@@ -163,13 +177,17 @@ func (e *Engine) SendMessage(ctx context.Context, convID, text string) error {
 	if err != nil {
 		return err
 	}
+	if c.Agent == "codex" {
+		return ErrCodexSoon
+	}
 	e.mu.Lock()
 	if _, busy := e.active[convID]; busy {
 		e.mu.Unlock()
 		return ErrBusy
 	}
 	r := &Run{ID: store.NewID("run"), ConvID: convID, Agent: c.Agent, Workdir: c.Workdir, Folders: existingDirs(c.ExtraFolders), done: make(chan struct{}),
-		gated: map[string]bool{}, codexPath: map[string][]string{}, escalated: map[string]bool{}, gateways: map[string]bool{}}
+		gated: map[string]bool{}, codexPath: map[string][]string{}, escalated: map[string]bool{}, gateways: map[string]bool{},
+		bgSteps: map[string]bool{}}
 	e.active[convID] = r
 	e.runs[r.ID] = r
 	e.mu.Unlock()
@@ -221,10 +239,20 @@ func (e *Engine) drive(ctx context.Context, r *Run, c store.Conversation, prompt
 	runDir := e.cfg.RunDir(r.ID)
 	_ = os.MkdirAll(runDir, 0o700)
 	events := make(chan agent.Event, 64)
+	// the same setup as the user's terminal in this folder (D-065)
+	env := e.agentEnv()
+	if note := shellenv.Direnv(env, r.Workdir); note != "" {
+		_ = e.st.AppendChat(context.Background(), r.ConvID, model.ChatItem{Type: "notice", Level: "warning", Text: note})
+	}
+	r.Env = env
 	opts := agent.StartOptions{RunID: r.ID, Workdir: r.Workdir, Folders: r.Folders, Prompt: prompt, SessionID: c.AgentSessionID,
-		RunDir: runDir, Brief: agent.Brief,
+		RunDir: runDir, Brief: agent.Brief, BaseEnv: env,
 		Env: map[string]string{"CB_GATE_URL": e.cfg.GateURL(), "CB_GATE_TOKEN": e.cfg.GateToken, "CB_RUN_ID": r.ID}}
-	opts.MCP = e.gatewaySpecs(r, runDir)
+	if c.Agent == "claude" {
+		opts.MCPServers = e.claudeMCPServers(r)
+	} else {
+		opts.MCP = e.gatewaySpecs(r, runDir)
+	}
 	if c.Model != "" && c.Agent != "fake" {
 		opts.Model = c.Model
 	}
@@ -271,6 +299,7 @@ func (e *Engine) drive(ctx context.Context, r *Run, c store.Conversation, prompt
 func (e *Engine) finish(r *Run, status, text string) {
 	ctx := context.Background()
 	r.ended.Store(true)
+	e.stopRunExecs(r.ID)
 	_ = e.st.ExpireRunApprovals(ctx, r.ID)
 	e.mu.Lock()
 	for id, ch := range e.waiters {
@@ -414,4 +443,19 @@ func (e *Engine) writeResult(ctx context.Context, convID string, status model.Co
 		title = "Run ended with an error"
 	}
 	_ = e.st.SetResult(ctx, convID, &model.RunResult{Title: title, Line: line, At: time.Now().UTC()}, subtitle)
+}
+
+// agentEnv is the user's login shell environment, or CloudBuddy's own in
+// tests (CB_PLAIN_ENV), so test runs never pick up the real one.
+func (e *Engine) agentEnv() map[string]string {
+	if os.Getenv("CB_PLAIN_ENV") == "1" {
+		env := map[string]string{}
+		for _, kv := range os.Environ() {
+			if i := strings.IndexByte(kv, '='); i > 0 {
+				env[kv[:i]] = kv[i+1:]
+			}
+		}
+		return env
+	}
+	return shellenv.Login()
 }

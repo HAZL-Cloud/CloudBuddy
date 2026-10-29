@@ -123,7 +123,7 @@ func (c *Codex) Run(ctx context.Context, o StartOptions, out chan<- Event) error
 	}
 	cmd := exec.Command("codex", "app-server", "--listen", "stdio://")
 	cmd.Dir = o.Workdir
-	cmd.Env = baseEnv(env)
+	cmd.Env = baseEnv(o.BaseEnv, env)
 	stderr, _ := os.Create(filepath.Join(o.RunDir, "codex.stderr"))
 	defer stderr.Close()
 	cmd.Stderr = stderr

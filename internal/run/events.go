@@ -91,8 +91,13 @@ func (e *Engine) toolStart(ctx context.Context, r *Run, ev agent.Event) {
 }
 
 func (e *Engine) toolEnd(ctx context.Context, r *Run, ev agent.Event) {
-	_, found, _ := e.st.StepByKey(ctx, r.ConvID, ev.ToolKey)
+	prev, found, _ := e.st.StepByKey(ctx, r.ConvID, ev.ToolKey)
 	if !found {
+		// Claude Code refused the call itself before any hook ran (a bad
+		// input, a blocked plain sleep): nothing ran, so it isn't a bypass.
+		if ev.IsError && strings.Contains(ev.Output, "<tool_use_error>") {
+			return
+		}
 		if r.Agent == "claude" {
 			// a tool finished that the gate never saw: something bypassed it
 			e.bypass(r, "A tool ran without passing CloudBuddy's gate, so the run was stopped. Check this computer's Claude Code settings.")
@@ -101,10 +106,24 @@ func (e *Engine) toolEnd(ctx context.Context, r *Run, ev agent.Event) {
 		return
 	}
 	out, masked, trunc := mask.Clean(ev.Output)
+	r.mu.Lock()
+	bg := r.bgSteps[prev.ID]
+	r.mu.Unlock()
+	stopped := e.stoppedStep(prev.ID)
+	if bg && !ev.IsError {
+		// A background command keeps running after the agent hears it
+		// started; cloudbuddy exec reports the real end (D-065).
+		_, _ = e.st.UpsertStep(ctx, r.ConvID, r.ID, ev.ToolKey, func(s *model.Step, _ bool) {
+			if s.EndedAt == nil && s.Output == "" {
+				s.Output = "Running in the background."
+			}
+		})
+		return
+	}
 	st, err := e.st.UpsertStep(ctx, r.ConvID, r.ID, ev.ToolKey, func(s *model.Step, _ bool) {
 		now := time.Now().UTC()
 		if s.Status != model.StatusDenied {
-			if ev.IsError {
+			if ev.IsError && stopped == "" {
 				s.Status = model.StatusFailed
 			} else {
 				s.Status = model.StatusDone
@@ -116,7 +135,7 @@ func (e *Engine) toolEnd(ctx context.Context, r *Run, ev agent.Event) {
 			s.DurationMs = &d
 		}
 		if out != "" || s.Output == "" {
-			s.Output = out
+			s.Output = withStopNote(out, stopped)
 		}
 		s.OutputTruncated = trunc
 		if masked {

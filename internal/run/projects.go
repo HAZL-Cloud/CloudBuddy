@@ -26,7 +26,7 @@ type StartInput struct {
 }
 
 func (e *Engine) knownAgent(name string) bool {
-	return name == "claude" || name == "codex" || (name == "fake" && e.fake != nil)
+	return name == "claude" || (name == "fake" && e.fake != nil)
 }
 
 func (e *Engine) StartConversation(ctx context.Context, in StartInput) (string, error) {
@@ -40,6 +40,9 @@ func (e *Engine) StartConversation(ctx context.Context, in StartInput) (string, 
 	agentName := in.Agent
 	if agentName == "" {
 		agentName = set.Agent
+	}
+	if agentName == "codex" {
+		return "", ErrCodexSoon
 	}
 	if !e.knownAgent(agentName) {
 		return "", fmt.Errorf("unknown agent %q", agentName)
@@ -125,13 +128,16 @@ func existingDirs(dirs []string) []string {
 // chosen.
 func (e *Engine) Settings(ctx context.Context) (model.Settings, error) {
 	set, err := e.st.Settings(ctx)
-	if set.Agent == "" {
+	if set.Agent == "" || set.Agent == "codex" { // Codex is coming soon (D-066)
 		set.Agent = "claude"
 	}
 	return set, err
 }
 
 func (e *Engine) SaveSettings(ctx context.Context, set model.Settings) (model.Settings, error) {
+	if set.Agent == "codex" {
+		return set, ErrCodexSoon
+	}
 	if !e.knownAgent(set.Agent) {
 		return set, fmt.Errorf("unknown agent %q", set.Agent)
 	}

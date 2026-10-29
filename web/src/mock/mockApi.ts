@@ -20,7 +20,7 @@ import { seedConnections, seedConversations, seedProjects, seedSettings } from '
 
 const AGENTS: Agent[] = [
   { name: 'claude', label: 'Claude Code', version: '2.1.311', available: true },
-  { name: 'codex', label: 'Codex', version: '0.163.0', available: true },
+  { name: 'codex', label: 'Codex', version: '', available: false, comingSoon: true },
 ]
 
 interface MockState {

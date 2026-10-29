@@ -103,9 +103,15 @@ func (e *Engine) ClaudePreTool(ctx context.Context, runID string, in HookInput) 
 	if !o.Allowed {
 		return HookAnswer{Decision: "deny", Reason: o.Reason}
 	}
-	// Network commands run through cloudbuddy exec, the only program
-	// allowed out of Claude Code's sandbox (D-036).
-	if call.Via == "shell" && o.Draft.Network != "" {
+	// Every command runs through cloudbuddy exec, the only program allowed
+	// out of Claude Code's sandbox (D-036): with network, the user's
+	// environment, CLI shims and a network log, like a terminal (D-065).
+	if call.Via == "shell" {
+		if call.Background {
+			r.mu.Lock()
+			r.bgSteps[o.Step.ID] = true
+			r.mu.Unlock()
+		}
 		token := randomToken()
 		rel := store.Release{TokenHash: hashToken(token), StepID: o.Step.ID, RunID: r.ID, LaunchEpoch: e.cfg.Epoch,
 			ApprovalID: o.ApprovalID, Command: call.Command, Cwd: call.Cwd, NetworkKind: o.Draft.Network, ExecDigest: o.ExecDigest}

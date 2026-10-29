@@ -7,6 +7,7 @@ package recognize
 import (
 	"fmt"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -98,6 +99,10 @@ type Draft struct {
 	OutsideWorkdirWrite bool
 	Loss                []string
 	LossTitle           string
+	// HiddenDelete is the delete word found where CloudBuddy can't read what
+	// actually runs: a cloud command it can't fully read, or the name of a
+	// script it runs (D-065).
+	HiddenDelete string
 }
 
 func (d *Draft) addTag(t model.Tag) {
@@ -300,7 +305,8 @@ func shellDraft(c Call, env Env, adapters *Adapters) Draft {
 		d.ReviewedChange = false
 		d.Kind = "cloud"
 		if d.Provider == "Local" {
-			d.Provider, d.Product = "Unknown", "Program"
+			// project or third-party code: a script, named after what it runs
+			d.Provider, d.Product = "Script", scriptProduct(segs)
 		}
 		d.raise(model.ActionUnknown)
 		d.Identity.Resolved = false
@@ -308,6 +314,15 @@ func shellDraft(c Call, env Env, adapters *Adapters) Draft {
 	}
 	if d.Opaque && d.Network != "" {
 		d.raise(model.ActionUnknown)
+	}
+	// D-065: only what can't be undone asks now, so a delete CloudBuddy
+	// can't read must still be caught by its name.
+	if w, what := hiddenDelete(c.Command, segs, d, cloudSeen, env); w != "" {
+		d.HiddenDelete = w
+		d.raise(model.ActionDelete)
+		d.addTag(model.TagIrreversible)
+		d.LossTitle = "What will happen"
+		d.Loss = []string{what, "CloudBuddy can't see exactly what it deletes, and can't undo it"}
 	}
 	if len(d.RecognizedBy) == 0 {
 		d.by("local")
@@ -1502,4 +1517,211 @@ func CloudCLINames() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ProviderForHost names the cloud provider behind a host the network log
+// saw ("api.supabase.com" -> "Supabase"), or "" for any other site.
+func ProviderForHost(host string) string {
+	host = strings.ToLower(host)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	for _, hp := range hostProviders {
+		if host == hp.suffix || strings.HasSuffix(host, "."+hp.suffix) {
+			return hp.provider
+		}
+	}
+	for _, hp := range extraHostProviders {
+		if host == hp.suffix || strings.HasSuffix(host, "."+hp.suffix) {
+			return hp.provider
+		}
+	}
+	return ""
+}
+
+// extraHostProviders are hosts CLIs and SDKs use that the HTTP recognizer
+// doesn't need (it only sees URLs the agent typed).
+var extraHostProviders = []struct{ suffix, provider string }{
+	{"api.supabase.com", "Supabase"}, {"supabase.com", "Supabase"}, {"cloudflare.com", "Cloudflare"},
+	{"workers.dev", "Cloudflare"}, {"github.com", "GitHub"}, {"githubusercontent.com", "GitHub"},
+	{"vercel.app", "Vercel"}, {"fly.dev", "Fly.io"}, {"herokuapp.com", "Heroku"}, {"azure.com", "Azure"},
+	{"cloud.google.com", "Google Cloud"}, {"gcr.io", "Google Cloud"}, {"docker.io", "Docker"},
+	{"npmjs.org", "npm"}, {"pypi.org", "PyPI"}, {"pythonhosted.org", "PyPI"},
+}
+
+// ShimCLIs are the cloud CLIs CloudBuddy shims inside scripts (D-065).
+func ShimCLIs() []string {
+	var out []string
+	for k := range cloudCLIs {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// hiddenWords are delete words that make CloudBuddy ask when it can't read
+// exactly what runs (D-065). Narrower than deleteWords: "release" or
+// "archive" in a script name isn't a sign of a delete.
+var hiddenWords = map[string]bool{"delete": true, "remove": true, "rm": true, "rb": true, "destroy": true,
+	"terminate": true, "purge": true, "deregister": true, "drop": true, "truncate": true, "wipe": true,
+	"erase": true, "unpublish": true, "revoke": true, "teardown": true, "nuke": true}
+
+// hiddenDelete finds a delete CloudBuddy can't see directly:
+//   - a command with shell tricks that reaches a cloud CLI or HTTP client and
+//     names a delete anywhere ("aws() { command aws s3 rb …; }",
+//     "curl … Action=TerminateInstances"); a local rm run as its own command
+//     doesn't count;
+//   - a program CloudBuddy doesn't know whose arguments call a cloud CLI and
+//     name a delete ("./env aws s3 rb …", "pnpm exec wrangler … DROP TABLE",
+//     "sed 'e aws s3 rm …'");
+//   - a script or make target whose own name says delete ("make db-drop",
+//     "./scripts/delete-prod.sh", "pnpm run cache:purge").
+func hiddenDelete(cmd string, segs []segment, d Draft, cloudSeen bool, env Env) (string, string) {
+	reachesWord := func(ws []string) bool {
+		for _, w := range ws {
+			if _, ok := cloudCLIs[w]; ok || httpClients[w] {
+				return true
+			}
+		}
+		return false
+	}
+	if d.Opaque {
+		reaches := cloudSeen
+		local := map[string]bool{}
+		for _, s := range segs {
+			if httpClients[s.Prog] {
+				reaches = true
+			}
+			if _, cloud := cloudCLIs[s.Prog]; !cloud && !httpClients[s.Prog] {
+				local[s.Prog] = true
+			}
+		}
+		ws := allWords(cmd)
+		if reaches || reachesWord(ws) {
+			for _, w := range ws {
+				if hiddenWords[w] && !local[w] {
+					return w, "Runs a command CloudBuddy can't fully read, and it mentions \u201c" + w + "\u201d"
+				}
+			}
+		}
+	}
+	for _, s := range segs {
+		if s.Prog == "" || pureSegment(s, env) {
+			continue
+		}
+		// only programs that run commands or code: free text (a commit
+		// message) that mentions aws and "remove" isn't a call
+		runsCode := codeRunners[s.Prog] || commandRunners[s.Prog] || strings.Contains(s.ProgPath, "/") && !systemPath(s.ProgPath)
+		if !runsCode {
+			continue
+		}
+		ws := allWords(strings.Join(s.Args, " "))
+		if !reachesWord(ws) {
+			continue
+		}
+		for _, w := range ws {
+			if hiddenWords[w] {
+				return w, "Runs " + s.Prog + " with a cloud command that mentions \u201c" + w + "\u201d"
+			}
+		}
+	}
+	for _, s := range segs {
+		for _, name := range scriptNames(s) {
+			for _, w := range allWords(name) {
+				if hiddenWords[w] && w != "rm" && w != "rb" {
+					return w, "Runs \u201c" + name + "\u201d, whose name says it deletes something"
+				}
+			}
+		}
+	}
+	return "", ""
+}
+
+// commandRunners run a command given in their arguments.
+var commandRunners = map[string]bool{"sed": true, "gsed": true, "awk": true, "gawk": true, "find": true,
+	"xargs": true, "parallel": true, "watch": true, "bash": true, "sh": true, "zsh": true, "env": true}
+
+// scriptNames are the names of what a command runs from the project: make
+// targets, package scripts, and script files.
+func scriptNames(s segment) []string {
+	pos := positional(s.Args)
+	var out []string
+	switch s.Prog {
+	case "make":
+		for _, a := range pos {
+			if !strings.Contains(a, "=") {
+				out = append(out, a)
+			}
+		}
+	case "npm", "pnpm", "yarn", "bun":
+		if len(pos) >= 2 && (pos[0] == "run" || pos[0] == "run-script") {
+			out = append(out, pos[1])
+		} else if len(pos) >= 1 && s.Prog != "npm" && !packageCommands[pos[0]] {
+			out = append(out, pos[0])
+		}
+	case "bash", "sh", "zsh", "python", "python3", "node", "ruby", "deno", "uv", "bunx":
+		if len(pos) >= 1 && strings.ContainsAny(pos[0], "./") {
+			out = append(out, filepath.Base(pos[0]))
+		}
+	}
+	if strings.HasPrefix(s.ProgPath, "./") || strings.HasPrefix(s.ProgPath, "../") ||
+		(strings.Contains(s.ProgPath, "/") && !systemPath(s.ProgPath)) {
+		out = append(out, filepath.Base(s.ProgPath))
+	}
+	return out
+}
+
+// packageCommands are pnpm/yarn/bun's own commands, not script names.
+var packageCommands = map[string]bool{"install": true, "i": true, "add": true, "remove": true, "rm": true,
+	"exec": true, "dlx": true, "x": true, "test": true, "build": true, "dev": true, "start": true, "list": true,
+	"ls": true, "why": true, "outdated": true, "update": true, "up": true, "link": true, "unlink": true,
+	"publish": true, "pack": true, "init": true, "create": true, "audit": true, "store": true, "info": true}
+
+// allWords splits any text into lowercase words at every non-letter, and at
+// camelCase humps ("Action=TerminateInstances" -> action, terminate, instances).
+func allWords(text string) []string {
+	var out []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			out = append(out, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	rs := []rune(text)
+	for i, r := range rs {
+		isAlnum := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+		if !isAlnum {
+			flush()
+			continue
+		}
+		if r >= 'A' && r <= 'Z' && i > 0 && rs[i-1] >= 'a' && rs[i-1] <= 'z' {
+			flush()
+		}
+		cur = append(cur, r)
+	}
+	flush()
+	return out
+}
+
+// scriptProduct names what a script step runs: "make credit-purchases",
+// "python3 credits.py", "pnpm exec".
+func scriptProduct(segs []segment) string {
+	for _, s := range segs {
+		if s.Prog == "" || safeTools[s.Prog] || shellBuiltins[s.Prog] {
+			continue
+		}
+		if names := scriptNames(s); len(names) > 0 {
+			return s.Prog + " " + names[0]
+		}
+		pos := positional(s.Args)
+		if (s.Prog == "pnpm" || s.Prog == "npx" || s.Prog == "bunx" || s.Prog == "yarn") && len(pos) > 0 {
+			if pos[0] == "exec" && len(pos) > 1 {
+				return s.Prog + " " + pos[1]
+			}
+			return s.Prog + " " + pos[0]
+		}
+		return s.Prog
+	}
+	return "Program"
 }

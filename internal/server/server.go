@@ -26,10 +26,11 @@ import (
 )
 
 type Agent struct {
-	Name      string `json:"name"`
-	Label     string `json:"label"`
-	Version   string `json:"version"`
-	Available bool   `json:"available"`
+	Name       string `json:"name"`
+	Label      string `json:"label"`
+	Version    string `json:"version"`
+	Available  bool   `json:"available"`
+	ComingSoon bool   `json:"comingSoon,omitempty"` // shown, not usable yet (D-066)
 }
 
 type Server struct {
@@ -63,6 +64,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversations/{id}/messages", s.handleMessage)
 	mux.HandleFunc("POST /api/conversations/{id}/stop", s.handleStop)
 	mux.HandleFunc("POST /api/approvals/{id}", s.handleDecide)
+	mux.HandleFunc("POST /api/steps/{id}/stop", s.handleStopStep)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("PUT /api/settings", s.handleSaveSettings)
 	mux.HandleFunc("POST /api/pick-folder", s.handlePickFolder)
@@ -320,6 +322,8 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.eng.SendMessage(r.Context(), r.PathValue("id"), body.Text)
 	switch {
+	case errors.Is(err, run.ErrCodexSoon):
+		writeErr(w, 409, err.Error())
 	case errors.Is(err, run.ErrBusy):
 		writeErr(w, 409, "busy")
 	case errors.Is(err, store.ErrNotFound):
@@ -333,6 +337,14 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	_ = s.eng.Stop(r.Context(), r.PathValue("id"))
+	w.WriteHeader(202)
+}
+
+func (s *Server) handleStopStep(w http.ResponseWriter, r *http.Request) {
+	if err := s.eng.StopStep(r.Context(), r.PathValue("id")); err != nil {
+		writeErr(w, 409, "not_running")
+		return
+	}
 	w.WriteHeader(202)
 }
 
@@ -473,12 +485,15 @@ func (s *Server) handleSessionStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request) {
-	var body struct{ Token, Cwd string }
+	var body struct {
+		Token, Cwd string
+		Pid        int
+	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, 400, "bad_request")
 		return
 	}
-	info, err := s.eng.Release(r.Context(), body.Token, body.Cwd)
+	info, err := s.eng.Release(r.Context(), body.Token, body.Cwd, body.Pid)
 	if err != nil {
 		writeErr(w, 409, err.Error())
 		return
@@ -491,9 +506,10 @@ func (s *Server) handleExecFinished(w http.ResponseWriter, r *http.Request) {
 		Token     string
 		ExitCode  int
 		Leftovers int
+		Output    string
 	}
 	_ = readJSON(r, &body)
-	s.eng.ExecFinished(body.Token, body.ExitCode, body.Leftovers)
+	s.eng.ExecFinished(body.Token, body.ExitCode, body.Leftovers, body.Output)
 	writeJSON(w, 200, map[string]string{"ok": "true"})
 }
 
@@ -544,4 +560,41 @@ func (s *Server) handleMCPResult(w http.ResponseWriter, r *http.Request) {
 	}
 	s.eng.MCPResult(r.Context(), body.RunID, body.Key, body.Output, body.IsError)
 	writeJSON(w, 200, map[string]string{"ok": "true"})
+}
+
+// ShimHandler serves the CLI shims on CloudBuddy's local socket (D-065). The
+// shims run inside commands, where CloudBuddy's port is off-limits; each
+// request carries the token of the command it came from, which can only add
+// a card to that command and wait for the user's answer, never approve.
+func (s *Server) ShimHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /shim/start", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Token, Prog, Cwd string
+			Args             []string
+		}
+		if err := readJSON(r, &body); err != nil || body.Token == "" || body.Prog == "" {
+			writeErr(w, 400, "bad_request")
+			return
+		}
+		ok, reason, key := s.eng.ShimStart(r.Context(), body.Token, body.Prog, body.Args, body.Cwd)
+		decision := "deny"
+		if ok {
+			decision = "allow"
+		}
+		writeJSON(w, 200, map[string]string{"decision": decision, "reason": reason, "key": key})
+	})
+	mux.HandleFunc("POST /shim/end", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Token, Key, Output string
+			ExitCode           int
+		}
+		if err := readJSON(r, &body); err != nil {
+			writeErr(w, 400, "bad_request")
+			return
+		}
+		s.eng.ShimEnd(body.Token, body.Key, body.ExitCode, body.Output)
+		writeJSON(w, 200, map[string]string{"ok": "true"})
+	})
+	return mux
 }

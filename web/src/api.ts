@@ -64,6 +64,8 @@ export const api = {
   createConversation: (input: { text: string; projectId?: string }) => call<{ id: string }>('POST', '/api/conversations', input),
   sendMessage: (id: string, text: string) => call<void>('POST', `/api/conversations/${enc(id)}/messages`, { text }),
   stop: (id: string) => call<void>('POST', `/api/conversations/${enc(id)}/stop`),
+  /** Stops a running command, such as a log tail (D-065). */
+  stopStep: (stepId: string) => call<void>('POST', `/api/steps/${enc(stepId)}/stop`),
   decide: (approvalId: string, decision: Decision) =>
     call<Step>('POST', `/api/approvals/${enc(approvalId)}`, { decision }),
   settings: () => call<Settings>('GET', '/api/settings'),
