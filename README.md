@@ -2,7 +2,7 @@
 
 **See what your AI agent does to your cloud, and stop it before anything you can't undo.**
 
-CloudBuddy is a local web app that runs the AI coding agents already on your computer (Claude Code and Codex) for cloud work: deploying to AWS, setting up Stripe, adding DNS records in Cloudflare, sending email with Resend. Every step the agent takes becomes a card on a timeline, and CloudBuddy **stops the agent before anything that can't be undone**:
+CloudBuddy is a local web app that runs Claude Code, already on your computer, for cloud work: deploying, monitoring, checking production data, setting up Stripe, adding DNS records in Cloudflare. It works like Claude Code in your own terminal, with your project's setup and your CLI logins. Every step the agent takes becomes a card on a timeline, and CloudBuddy **stops the agent before anything that can't be undone**:
 - deletes
 - moving money
 - sending to real people
@@ -23,11 +23,11 @@ It runs only on your computer (`127.0.0.1`), uses your existing agent logins and
 
 ## Status
 
-`v0.1.0` is the first release. It works on **macOS** with **Claude Code** and **Codex**. Linux runs, but approved project code with network is refused there until the Linux sandbox is built (see [Safety](docs/security.md)). Windows isn't supported yet.
+`v0.1.0` is the first release. It works on **macOS** with **Claude Code**; Codex support is coming soon. Linux runs without CloudBuddy's file rules for commands until the Linux sandbox is built (see [Safety](docs/security.md)). Windows isn't supported yet.
 
 ## Quick start
 
-You need: Go 1.24+, Node 20+, Docker, and Claude Code and/or Codex installed and signed in.
+You need: Go 1.24+, Node 20+, Docker, and Claude Code installed and signed in.
 
 ```bash
 git clone <this repo> cloudbuddy && cd cloudbuddy
@@ -51,27 +51,25 @@ This adds a **Demo agent** that replays a deploy run, so you can try approvals w
 ## How it works
 
 ```
- browser ── CloudBuddy (Go, 127.0.0.1:7420) ── claude / codex CLI ── your cloud CLIs and MCP servers
+ browser ── CloudBuddy (Go, 127.0.0.1:7420) ── claude CLI ── your cloud CLIs and MCP servers
                      │
                gate: recognizer → policy → ask you → release once
 ```
 
-1. CloudBuddy starts the agent CLI with its own settings:
-   - **Claude Code** gets a hook on every tool call, a no-network sandbox, and no user or project settings.
-   - **Codex** gets pinned approval settings and its own home folder.
+1. CloudBuddy starts Claude Code the way your terminal would in that folder: your login-shell environment, the folder's direnv setup, your MCP servers. It adds a hook on every tool call and loads no user or project settings that could switch the hook off.
 2. Before any tool call runs, the **recognizer** works out what it does:
    - provider, action and identity;
    - warning tags: Can't undo, Moves money, Reaches people, Live.
-3. The **policy** decides: run it, ask you, or refuse.
-4. Local work (editing files, building) runs inside a sandbox with **no network**.
-5. Anything that needs network goes through the gate. Approved commands run through `cloudbuddy exec` under a sandbox profile that protects CloudBuddy's own files, your agent settings and secret folders.
-6. MCP servers are reached only through CloudBuddy's MCP gateway, which checks every tool call.
+3. The **policy** decides. Everything runs as in your terminal unless it can't be undone (deletes, payments, messages to people, live-mode changes) or your Connections rules say otherwise. Then it asks you.
+4. Commands run through `cloudbuddy exec` with network, under a sandbox profile that only keeps CloudBuddy's own files, your agent settings and CloudBuddy's port off-limits.
+5. Inside scripts, shims for your cloud CLIs show each call as its own card and ask before deletes there too. A small network log adds where each command went ("Talked to api.supabase.com"), so a script lands in its provider's lane.
+6. Background commands such as log tails run too; the card stays live and has a **Stop** button.
 
 Every decision fails closed: if CloudBuddy can't decide, can't reach you, or crashes, the action doesn't run.
 
 ## Adapters
 
-CloudBuddy knows AWS (every service, generated from the AWS CLI models), Stripe, Cloudflare and Resend. Anything else that has a CLI or an MCP server still works: CloudBuddy guesses from the command and asks unless it's clearly read-only.
+CloudBuddy knows AWS (every service, generated from the AWS CLI models), Stripe, Cloudflare and Resend. Anything else that has a CLI or an MCP server still works: CloudBuddy guesses from the command and asks only when it looks like a delete, a payment or a message to people.
 
 Adapters are YAML files. See [docs/adapters.md](docs/adapters.md) to add one.
 
