@@ -1,73 +1,80 @@
 # CloudBuddy safety model and threat model
 
-CloudBuddy's job is to make sure an AI agent can't do anything irreversible to your cloud accounts without you seeing it and saying yes. This page says how, and where that promise ends. The full reasoning, with every decision and review finding, is in `plan_and_track.md`.
+CloudBuddy lets an AI agent work in your projects the way Claude Code does in your own terminal, shows every step it takes as a card, and stops for your yes before anything that can't be undone. This page says how, and where that promise ends. The full reasoning, with every decision and review finding, is in `plan_and_track.md` (the current model is D-065).
 
 ## What CloudBuddy protects against
 
-**The agent itself going wrong:** a mistake, a misunderstanding, or a prompt-injection attack that turns it against you. The agent is treated as untrusted; CloudBuddy and you are trusted.
+**The agent itself going wrong:** a mistake, a misunderstanding, or a prompt-injection attack that turns it against you.
 
 It protects against:
-- **Irreversible cloud actions without approval:** deletes, moving money, sending to people, live-mode changes, and running project or third-party code with network.
+- **Irreversible cloud actions without your yes:** deletes, moving money, sending to people, and changes in live mode, including when the agent hides them in a compound command, a wrapper or a script that calls a cloud CLI.
 - **The agent switching the gate off:** editing agent settings, calling CloudBuddy's own port, or approving its own request.
 - **Web pages you visit** reaching CloudBuddy on localhost.
 - **Secrets leaking into CloudBuddy's records** (known formats only).
 
+It does **not** try to stop what a normal terminal allows: reading your files, sending data to websites, running project code with network. CloudBuddy shows those steps; it doesn't block them (D-065).
+
 ## How each path is covered
 
-| Path | Claude Code | Codex |
-|---|---|---|
-| Shell commands, no network | Claude Code's sandbox: no network, writes only in the project | Codex sandbox (`workspace-write`, network off) |
-| Shell commands that need network | PreToolUse hook (`onFailure: block`) decides, then `cloudbuddy exec` runs the exact released command under CloudBuddy's macOS sandbox profile | Codex asks per command; CloudBuddy accepts only plain command approvals |
-| MCP tool calls | Only through CloudBuddy's gateway (`--strict-mcp-config`) | Only through the gateway (isolated `CODEX_HOME`) |
-| File edits | Hook; files outside the project ask; CloudBuddy's files and agent settings are denied | Codex approval for writes outside the workspace |
-| Unknown tools | Asked or denied; the tool set is restricted (`--tools`) | Unknown request types declined |
-| User or project settings | Not loaded (`--setting-sources ""`) | Not loaded (own `CODEX_HOME`, only the login is linked) |
+| Path | Claude Code |
+|---|---|
+| Shell commands | The PreToolUse hook (`onFailure: block`) decides every command. `cloudbuddy exec` then runs the exact released command with network, your login-shell environment and the folder's direnv setup, under a macOS sandbox profile (see "What commands can't do" below). |
+| Cloud CLIs inside scripts | Shims for the installed cloud CLIs (`aws`, `supabase`, `stripe`, `gh`, …) come first on every command's `PATH`. Each call a script makes shows as its own card and asks first if it can't be undone. |
+| Where a command went | A small proxy per command records the hosts it talked to ("Talked to api.supabase.com ×4"). It never decrypts anything and never connects to this computer. |
+| MCP tool calls | Your own MCP servers from `~/.claude.json` load (URL and OAuth ones too); the hook decides every call. A project's `.mcp.json` and the claude.ai connectors aren't loaded. |
+| File edits | Hook; CloudBuddy's files and the agents' settings are refused. |
+| Background commands | Run like in a terminal (log tails); the card stays live until the command ends, and **Stop** ends it. A run's commands stop when the run ends. |
+| User or project settings | Not loaded (`--setting-sources ""`), so they can't switch the hook off. Claude Code starts with your login environment only; the folder's direnv changes reach commands, not Claude Code itself. |
+
+## What commands can't do
+
+Commands run like in your terminal, with these exceptions. They keep the agent from changing the gate, or from getting code run later outside the sandbox (two Codex reviews of D-065):
+- read or change CloudBuddy's folder, or reach CloudBuddy's port or its database port;
+- change the agents' folders and settings (`~/.claude`, `~/.codex`, `~/.claude.json`) or read their logins;
+- change any folder on your PATH, the folders of `claude`, `direnv` and your cloud CLIs, or direnv's list of allowed `.envrc` files;
+- change shell startup files, LaunchAgents, global git config, or Terminal and iTerm profiles;
+- run `open`, `osascript`, `launchctl`, `crontab`, `at`, `screen`, `tmux` or `defaults`, send Apple events, or connect to the control sockets of tmux, screen, cmux, iTerm, WezTerm or Zellij.
+
+The folder's `.envrc` itself runs inside the same sandbox when CloudBuddy loads it.
+
+Codex is paused for now (D-066).
 
 ## The rules (in order)
 
 1. Anything aimed at CloudBuddy itself or the agents' settings: **refused**.
-2. Background or detached work with network: **refused**.
-3. Local work in the no-network sandbox: runs.
-4. Connection set to Off: refused. Read-only: only reviewed reads run.
-5. **Deletes ask.**
-6. **Can't undo, Moves money, Reaches people ask.**
-7. **Live mode asks.**
-8. **Project or third-party code with network asks** (install scripts, `cdk deploy`, `terraform apply`), with a warning that CloudBuddy can't see inside.
-9. A change where CloudBuddy can't tell the account asks.
-10. "Ask before every change" asks.
-11. Anything only guessed, opaque, or using files outside the project folder asks. That includes shell tricks, nested shells, unusual environment variables, curl config files and uploads, and a `cd` that leaves the project or goes somewhere CloudBuddy can't place (`cd ~`, `cd -`, a variable, a folder that isn't there). Simple text tools such as `head`, `grep` and `jq` may share a command with a cloud CLI, whether or not the agent asked for network.
-12. **Only reviewed rules run without asking:**
-    - reads that a reviewed rule or reviewed read verb covers (not ones that mint credentials or reveal secrets);
-    - creates and changes that a hand-written adapter rule marks as reviewed: reversible, no money, no people.
+2. Connection set to **Off**: refused.
+3. Connection set to **Read-only**: only reviewed reads run.
+4. **Deletes ask.** That includes a delete CloudBuddy can't read exactly: a command with shell tricks that reaches a cloud CLI and names a delete, a project program that calls a cloud CLI with a delete (`./env aws s3 rb …`, `pnpm exec wrangler … DROP TABLE`), and a script or make target whose name says delete (`make db-drop`, `./scripts/delete-prod.sh`).
+5. **Can't undo, Moves money, Reaches people ask.**
+6. **Changes in live mode ask.** Reads in live mode run.
+7. "Ask before every change" asks before anything but a read.
+8. **Everything else runs**, as it would in your terminal.
 
-    Everything else asks, even if CloudBuddy can name it.
-
-**The project folders.** A chat outside a project has one folder. A chat in a project (D-054) has the project's folders, as they were when the chat started. All of them count as the project: the agent may change files in any of them (Claude Code gets `--add-dir`, Codex gets them as writable roots), uploads from them don't count as "files outside the project", and approved code with network may write in all of them. While approved code runs, every one of the chat's folders is locked, so no new step is decided until it finishes. CloudBuddy's own folder and the agents' settings stay refused inside a project folder too.
-
-Approvals are **single use**. Each is tied to the exact command and the hash of the files it runs, consumed once, and cancelled if the run ends. Nothing is ever approved by waiting.
+Approvals are **single use**. Each is tied to the exact command (and, for approved project code, the hash of the files it runs), consumed once, and cancelled if the run ends. Nothing is ever approved by waiting.
 
 ## Fail closed
 
 - A hook that crashes, can't start, or times out blocks the call.
 - If CloudBuddy is unreachable, nothing runs.
 - If CloudBuddy restarts, pending approvals expire and running steps are marked "outcome unknown". They are never retried automatically.
+- A shim that can't reach CloudBuddy lets the call run with a warning; only a "no" stops it. The shims are a view into scripts, not a wall.
 
 ## Local security
 
 - The server listens on `127.0.0.1` only. It checks the `Host` header exactly (this blocks DNS rebinding) and sends no CORS headers.
-- **No browser sign-in** (D-063). Every change needs a matching `Origin`, so other websites can't approve or change anything. Other programs running on your computer could call the API. The agent can't: its commands are kept away from CloudBuddy's port and data folder.
-- **Helper programs** (hook, exec wrapper, MCP gateway) use a separate secret. It can submit requests, but it can't approve anything.
+- **No browser sign-in** (D-063). Every change needs a matching `Origin`, so other websites can't approve or change anything. Other programs running on your computer could call the API. The agent can't: its commands can't reach CloudBuddy's port, directly or through the network-log proxy, or its data folder.
+- **Helper programs** (hook, exec wrapper) use a separate secret, and the shims a per-command token on a local socket. Neither can approve anything.
 - The frontend is served with a strict Content Security Policy, and all agent and tool text is shown as plain text.
 
 ## Known limits (accepted risks)
 
-- **Code you approve to run with network.** Approved code can do anything those credentials allow: an install script, a build, `cdk deploy`, `terraform apply`. CloudBuddy still asks first and shows a warning. It keeps its own files, your agent settings and config files protected, kills processes the command leaves behind (best effort on macOS), and refuses to run the command if its files changed after you approved it. But it can't see or stop what that code does in the cloud.
-- **Inputs a script reads without naming them** can change between your approval and the run.
-- **Linux:** `cloudbuddy exec`'s file rules use macOS `sandbox-exec`. On Linux, approved project code with network is refused, and plain cloud CLI calls run without CloudBuddy's file rules (D-042).
-- **Accounts:** CloudBuddy works out the account from the command (`--profile`, environment variables). The CLI's own default is shown in Connections but not re-checked on every call.
+- **What CloudBuddy can't see, it can't stop.** A script that calls a cloud API through an SDK or by full path, or a CLI the project runs from `node_modules`, shows as one card with the hosts it talked to, not each operation. If it deletes something, CloudBuddy only asks when the script's name or command says so. This is the trade-off for working like a terminal (D-065).
+- **Data can leave like in a terminal.** Commands can read your files and send them anywhere.
+- **A deliberately hostile agent may still find a way out.** The sandbox lists what it blocks; macOS has more ways to run code outside it than any list. Two that stay open on purpose: **Docker** (a container can mount any folder, but blocking it would break container builds and local development) and **ssh to this computer** (only if Remote Login is on). Since D-063 approvals need no secret, so anything that gets out could approve requests. Pairing the browser once (a secret only your browser holds) would close this; it's the user's call (D-065 work log).
+- **Accounts:** CloudBuddy works out the account from the command and the environment (`--profile`, `AWS_PROFILE`, direnv). A config file can still switch it.
+- **Linux:** `cloudbuddy exec`'s file rules use macOS `sandbox-exec`. On Linux commands run without them (D-042).
 - **Masking** hides known secret formats (AWS, Stripe, GitHub, JWTs, private keys, Authorization headers, secret-looking variables). Other formats can get through.
 - **Outside the agent:** software already running on your computer, other people, and other tools can change your cloud without CloudBuddy seeing it.
-- **MCP servers reached by URL** (often OAuth) aren't supported yet. Only stdio servers run through the gateway.
 
 ## Reporting a security problem
 
