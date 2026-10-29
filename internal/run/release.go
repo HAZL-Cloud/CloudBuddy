@@ -32,7 +32,8 @@ type ReleaseInfo struct {
 	StepID  string `json:"stepId"`
 	// PathPrefix goes in front of PATH: the folder of CLI shims (D-065).
 	PathPrefix string            `json:"pathPrefix,omitempty"`
-	Env        map[string]string `json:"env,omitempty"` // shim socket and token, network log proxy
+	Env        map[string]string `json:"env,omitempty"`   // the folder's direnv setup, shim socket and token, network log proxy
+	Unset      []string          `json:"unset,omitempty"` // variables the folder's direnv setup removes
 	Background bool              `json:"background,omitempty"`
 }
 
@@ -74,7 +75,10 @@ func (e *Engine) Release(ctx context.Context, token, _ string, pid int) (Release
 	x := &execState{runID: r.ID, stepID: rel.StepID, tokenHash: hashToken(token), pid: pid, background: bg,
 		quiet: rel.NetworkKind == "A", shimToken: randomToken(), started: time.Now()}
 	info := ReleaseInfo{Command: rel.Command, Cwd: rel.Cwd, Kind: rel.NetworkKind, StepID: rel.StepID, Background: bg,
-		Profile: e.profile(), Env: map[string]string{}}
+		Profile: e.profile(), Env: map[string]string{}, Unset: r.envUnset}
+	for k, v := range r.envSet {
+		info.Env[k] = v
+	}
 	if r.shimDir != "" && e.shimSock != "" {
 		info.PathPrefix = r.shimDir
 		info.Env[shim.EnvDir] = r.shimDir

@@ -1,9 +1,11 @@
 package run
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"cloudbuddy/internal/recognize"
@@ -57,7 +59,23 @@ func (e *Engine) Protect(paths []string, programs []string) {
 // setup.
 func (e *Engine) profile() string {
 	return sandbox.MacProfile(sandbox.Paths{DataDir: e.cfg.DataDir, Home: e.cfg.Home, Bin: e.cfg.Bin, Port: e.cfg.Port,
-		ShimDir: e.shimRoot, DenyWrite: e.denyWrite})
+		DBPort: dbPort(e.cfg.DBURL), ShimDir: e.shimRoot, DenyWrite: e.denyWrite})
+}
+
+// dbPort is the local port of CloudBuddy's database, if it is on this computer.
+func dbPort(dbURL string) int {
+	u, err := url.Parse(dbURL)
+	if err != nil {
+		return 0
+	}
+	if h := u.Hostname(); h != "127.0.0.1" && h != "localhost" && h != "::1" {
+		return 0
+	}
+	port, _ := strconv.Atoi(u.Port())
+	if port == 0 {
+		port = 5432
+	}
+	return port
 }
 
 // runShims writes one shim per cloud CLI found on this run's PATH (after

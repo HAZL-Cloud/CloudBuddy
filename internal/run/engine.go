@@ -67,6 +67,8 @@ type Run struct {
 	Folders                    []string          // the project's other folders that still exist
 	Env                        map[string]string // the agent's environment: login shell plus direnv (D-065)
 	shimDir                    string            // this run's CLI shims
+	envSet                     map[string]string // the folder's direnv changes, for commands only
+	envUnset                   []string
 	cancel                     context.CancelFunc
 	canary                     atomic.Bool
 	ended                      atomic.Bool
@@ -248,15 +250,33 @@ func (e *Engine) drive(ctx context.Context, r *Run, c store.Conversation, prompt
 	events := make(chan agent.Event, 64)
 	// the same setup as the user's terminal in this folder (D-065)
 	// The .envrc runs inside the commands' sandbox: a command could have
-	// changed it, or a file it sources (Codex review of D-065).
-	env := e.agentEnv()
+	// changed it, or a file it sources. Its changes go only to commands,
+	// through cloudbuddy exec; Claude Code itself starts with the login
+	// environment, so nothing from the project (NODE_OPTIONS, BASH_ENV…)
+	// loads code into it outside the sandbox (Codex review of D-065).
+	login := e.agentEnv()
+	env := make(map[string]string, len(login))
+	for k, v := range login {
+		env[k] = v
+	}
 	if note := shellenv.Direnv(env, r.Workdir, e.direnvBin, e.profile()); note != "" {
 		_ = e.st.AppendChat(context.Background(), r.ConvID, model.ChatItem{Type: "notice", Level: "warning", Text: note})
 	}
 	r.Env = env
+	r.envSet, r.envUnset = map[string]string{}, nil
+	for k, v := range env {
+		if old, ok := login[k]; !ok || old != v {
+			r.envSet[k] = v
+		}
+	}
+	for k := range login {
+		if _, ok := env[k]; !ok {
+			r.envUnset = append(r.envUnset, k)
+		}
+	}
 	r.shimDir = e.runShims(r)
 	opts := agent.StartOptions{RunID: r.ID, Workdir: r.Workdir, Folders: r.Folders, Prompt: prompt, SessionID: c.AgentSessionID,
-		RunDir: runDir, Brief: agent.Brief, BaseEnv: env,
+		RunDir: runDir, Brief: agent.Brief, BaseEnv: login,
 		Env: map[string]string{"CB_GATE_URL": e.cfg.GateURL(), "CB_GATE_TOKEN": e.cfg.GateToken, "CB_RUN_ID": r.ID}}
 	if c.Agent == "claude" {
 		opts.MCPServers = e.claudeMCPServers(r)

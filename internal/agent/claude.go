@@ -60,7 +60,9 @@ func claudeArgs(o StartOptions, settingsPath, mcpPath string) []string {
 		"--setting-sources", "",
 		"--settings", settingsPath,
 		"--permission-prompts", "none",
-		"--mcp-config", mcpPath,
+		// only the servers CloudBuddy passes: a project's .mcp.json would
+		// start outside the sandbox (Codex review of D-065)
+		"--strict-mcp-config", "--mcp-config", mcpPath,
 		"--tools", AllowedTools,
 		"--append-system-prompt", o.Brief,
 	}
