@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"cloudbuddy/internal/run"
 	"cloudbuddy/internal/store"
 )
 
@@ -67,13 +68,18 @@ func (s *Server) handleDashboardRefresh(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleDashboardDecision(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Decision string `json:"decision"`
+		// what the page showed: the answer is only for that command
+		Command string `json:"command"`
+		Cwd     string `json:"cwd"`
 	}
 	if err := readJSON(r, &body); err != nil || (body.Decision != "allow" && body.Decision != "deny") {
 		writeErr(w, 400, "bad_request")
 		return
 	}
-	err := s.eng.AllowDashboardSource(r.Context(), r.PathValue("id"), r.PathValue("key"), body.Decision == "allow")
+	err := s.eng.AllowDashboardSource(r.Context(), r.PathValue("id"), r.PathValue("key"), body.Decision == "allow", body.Command, body.Cwd)
 	switch {
+	case errors.Is(err, run.ErrDashChanged):
+		writeErr(w, 409, "changed")
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, 404, "not_found")
 	case err != nil:

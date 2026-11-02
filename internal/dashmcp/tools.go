@@ -74,12 +74,12 @@ func Tools() []map[string]any {
 		"description": `Save a dashboard the user can keep open in CloudBuddy. CloudBuddy reruns its commands itself on a timer, without you, and draws the tiles with its own widgets. Use it when the user wants numbers, charts or tables that stay fresh (users, signups, revenue, errors, deploy status). It returns what each command printed and what each tile shows: fix anything that failed and save again with the same id.
 
 How to build one:
-1. Find the data with shell commands first, and make each command print only the data: a number, JSON or CSV. Use jq, psql -tA or --csv, sqlite3 -json, a CLI's --output json.
+1. Find the data with shell commands first, and make each command print only the data: a number, JSON or CSV. Use jq, psql -tA or --csv, sqlite3 -readonly -safe -json, a CLI's --output json.
 2. One source per command; tiles point at a source and, for JSON, a path into it.
 3. A number tile records its value on every refresh, so its trend, sparkline and line chart fill in over time. For history that already exists (signups per day), return rows and use a line or bars tile with labelField and valueField.
 
 What runs on the timer (CloudBuddy checks every command on every run):
-- Runs by itself: cloud CLI reads (aws ... describe/list/get, stripe ... list/retrieve, gh ... list/view), text tools on project files (cat, grep, wc, jq), and database reads: psql with one SELECT in -c (CloudBuddy runs it in a read-only session), sqlite3 -readonly with one SELECT.
+- Runs by itself: cloud CLI reads (aws ... describe/list/get, stripe ... list/retrieve, gh ... list/view), text tools on project files (cat, grep, wc, jq), and database reads: psql with one SELECT in -c (CloudBuddy runs it in a read-only session, without ~/.psqlrc) and sqlite3 -readonly -safe with one SELECT. Only plain shell: words, quotes, $NAME variables, pipes, ; and &&; no $(...), ${...}, subshells or zsh glob qualifiers.
 - Waits for the user's OK once, on the dashboard page: scripts and programs (node, python, npm run, ./bin/...), web requests (curl), anything that writes files or that CloudBuddy can't read. It asks again if the command or its script changes. Tell the user when this happens.
 - Never runs from a dashboard: deletes, payments, messages to people, anything that can't be undone or that changes live mode, background commands. Inside a script, a CLI call like that is stopped.
 

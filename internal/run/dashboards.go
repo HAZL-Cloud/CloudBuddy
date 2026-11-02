@@ -57,6 +57,7 @@ type dashExec struct {
 // StartDashboards refreshes dashboards when they are due, checking every
 // `every`, until ctx ends. History older than 30 days is dropped hourly.
 func (e *Engine) StartDashboards(ctx context.Context, every time.Duration) {
+	e.killDashLeftovers()
 	go func() {
 		tick := time.NewTicker(every)
 		defer tick.Stop()
@@ -110,10 +111,14 @@ func (e *Engine) RefreshDashboard(ctx context.Context, id string) error {
 	}
 	ch := make(chan struct{})
 	e.dashRunning[id] = ch
+	ctx, stop := context.WithCancelCause(ctx)
+	e.dashStop[id] = stop
 	e.dashMu.Unlock()
 	defer func() {
+		stop(nil)
 		e.dashMu.Lock()
 		delete(e.dashRunning, id)
+		delete(e.dashStop, id)
 		e.dashMu.Unlock()
 		close(ch)
 		e.bus.Dashboard(id)
@@ -132,7 +137,6 @@ func (e *Engine) RefreshDashboard(ctx context.Context, id string) error {
 		return err
 	}
 	e.bus.Dashboard(id) // the page shows "Refreshing…"
-	approvals, _ := e.st.DashboardApprovals(ctx, id)
 	envs := &dashEnvs{e: e, m: map[string]dashEnv{}}
 	runs := make([]store.DashboardRun, len(spec.Sources))
 	var wg sync.WaitGroup
@@ -140,7 +144,7 @@ func (e *Engine) RefreshDashboard(ctx context.Context, id string) error {
 		wg.Add(1)
 		go func(i int, src dash.Source) {
 			defer wg.Done()
-			runs[i] = e.dashSource(ctx, d, src, approvals, envs)
+			runs[i] = e.dashSource(ctx, d, src, envs)
 		}(i, src)
 	}
 	wg.Wait()
@@ -260,7 +264,7 @@ func (e *Engine) classifyDash(ctx context.Context, d store.Dashboard, command, c
 }
 
 // dashSource decides and runs one command.
-func (e *Engine) dashSource(ctx context.Context, d store.Dashboard, src dash.Source, approvals map[string]store.DashboardApproval, envs *dashEnvs) store.DashboardRun {
+func (e *Engine) dashSource(ctx context.Context, d store.Dashboard, src dash.Source, envs *dashEnvs) store.DashboardRun {
 	run := store.DashboardRun{SourceKey: src.Key, StartedAt: time.Now().UTC()}
 	cwd, err := dashCwd(d, src.Cwd)
 	if err != nil {
@@ -274,17 +278,8 @@ func (e *Engine) dashSource(ctx context.Context, d store.Dashboard, src dash.Sou
 		run.State, run.Note = dash.RunBlocked, class.Reason
 		return run
 	case dash.NeedsOK:
-		a, ok := approvals[src.Key]
-		if !ok || a.Command != src.Command || a.Cwd != cwd {
-			run.State, run.Note = dash.RunWaiting, class.Reason
-			return run
-		}
-		if !a.Allowed {
-			run.State, run.Note = dash.RunDeclined, class.Reason
-			return run
-		}
-		if a.ExecDigest != filesDigest(src.Command, cwd) {
-			run.State, run.Note = dash.RunWaiting, "The files this command runs changed after you allowed it, so it needs your OK again. "+class.Reason
+		if st, note := e.dashApproved(ctx, d, src, cwd, env, class); st != "" {
+			run.State, run.Note = st, note
 			return run
 		}
 	}
@@ -293,6 +288,119 @@ func (e *Engine) dashSource(ctx context.Context, d store.Dashboard, src dash.Sou
 		run.Note = strings.TrimSpace(run.Note + "\n" + envNote)
 	}
 	return run
+}
+
+// errDashStopped is why a refresh was stopped: the user paused or deleted
+// the dashboard.
+var errDashStopped = errors.New("the dashboard was paused or deleted")
+
+// stopDashboard stops a dashboard's running refresh, and the commands
+// waiting in it (Codex review of D-067).
+func (e *Engine) stopDashboard(id string) {
+	e.dashMu.Lock()
+	stop := e.dashStop[id]
+	e.dashMu.Unlock()
+	if stop != nil {
+		stop(errDashStopped)
+	}
+}
+
+// dashApproved checks, right when it is used, that the user's OK covers this
+// exact command, folder and files. It returns the run state when it doesn't.
+func (e *Engine) dashApproved(ctx context.Context, d store.Dashboard, src dash.Source, cwd string, env map[string]string, class dash.Class) (string, string) {
+	all, err := e.st.DashboardApprovals(ctx, d.ID)
+	if err != nil {
+		return dash.RunWaiting, "CloudBuddy couldn't read your answer for this command, so it didn't run."
+	}
+	a, ok := all[src.Key]
+	if !ok || a.Command != src.Command || a.Cwd != cwd {
+		return dash.RunWaiting, class.Reason
+	}
+	if !a.Allowed {
+		return dash.RunDeclined, class.Reason
+	}
+	if a.ExecDigest != dashDigest(src.Command, cwd, env, dashRun(d, env).projectFolders()) {
+		return dash.RunWaiting, "The files this command runs changed after you allowed it, so it needs your OK again. " + class.Reason
+	}
+	return "", ""
+}
+
+// dashDigest hashes the files a command runs or reads, as the shell will
+// see them (quotes removed, $NAME expanded, bare program names found on
+// PATH when they live in the project), plus the project's manifests. An
+// approval is tied to it (Codex review of D-067: quoted names and PATH
+// programs were missed).
+func dashDigest(command, cwd string, env map[string]string, folders []string) string {
+	files := map[string]bool{}
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(cwd, p)
+		}
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+			files[filepath.Clean(p)] = true
+		}
+	}
+	inProject := func(p string) bool {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			p = r
+		}
+		for _, f := range folders {
+			if p == f || strings.HasPrefix(p, f+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
+	}
+	expandVars := func(s string) string { return os.Expand(s, func(k string) string { return env[k] }) }
+	for _, argv := range recognize.Argv(command) {
+		prog := expandVars(argv[0])
+		if strings.Contains(prog, "/") {
+			add(prog)
+		} else if p := lookIn(env["PATH"], prog); p != "" && inProject(p) {
+			add(p)
+		}
+		for _, a := range argv[1:] {
+			a = expandVars(a)
+			add(a)
+			if i := strings.IndexByte(a, '='); i > 0 { // --file=x.js
+				add(a[i+1:])
+			}
+		}
+	}
+	for _, m := range manifests {
+		add(filepath.Join(cwd, m))
+	}
+	tf, _ := filepath.Glob(filepath.Join(cwd, "*.tf"))
+	for _, f := range tf {
+		add(f)
+	}
+	names := make([]string, 0, len(files))
+	for f := range files {
+		names = append(names, f)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\n", command, cwd)
+	for _, f := range names {
+		fi, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+		if fi.Size() > 32<<20 { // a big binary: its size and time
+			fmt.Fprintf(h, "%s size %d mtime %d\n", f, fi.Size(), fi.ModTime().UnixNano())
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		sum := sha256.Sum256(b)
+		fmt.Fprintf(h, "%s %x\n", f, sum)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // execDash runs one allowed command, the way cloudbuddy exec runs a chat's
@@ -306,6 +414,21 @@ func (e *Engine) execDash(ctx context.Context, d store.Dashboard, src dash.Sourc
 		return
 	}
 	defer func() { <-dashSlots }()
+	// Waiting for a slot can take a while: check again right before running.
+	if ctx.Err() != nil {
+		run.State, run.Note = dash.RunFailed, stoppedNote(ctx)
+		return
+	}
+	if cur, err := e.st.GetDashboard(ctx, d.ID); err != nil || !bytes.Equal(cur.Spec, d.Spec) || cur.Workdir != d.Workdir {
+		run.State, run.Note = dash.RunFailed, "The dashboard changed while this command waited to run, so it didn't run this time."
+		return
+	}
+	if class.Verdict == dash.NeedsOK {
+		if st, note := e.dashApproved(ctx, d, src, cwd, base, class); st != "" {
+			run.State, run.Note = st, note
+			return
+		}
+	}
 	run.StartedAt = time.Now().UTC()
 
 	env := make(map[string]string, len(base)+10)
@@ -317,9 +440,13 @@ func (e *Engine) execDash(ctx context.Context, d store.Dashboard, src dash.Sourc
 	// no pagers or colours: a pager is a program the CLI would start
 	env["AWS_PAGER"], env["PAGER"], env["GIT_PAGER"], env["PSQL_PAGER"] = "", "cat", "cat", "cat"
 	env["NO_COLOR"] = "1"
+	// so a restart can find and stop commands it left running
+	env["CB_DASH_MARK"] = e.cfg.Epoch
 	if class.SQL == "psql" {
 		// a read-only session: the server refuses any change (D-068)
 		env["PGOPTIONS"] = strings.TrimSpace(env["PGOPTIONS"] + " -c default_transaction_read_only=on")
+		// ~/.psqlrc runs before the query and could switch it back off
+		env["PSQLRC"] = "/dev/null"
 	}
 	x := &dashExec{dashID: d.ID, key: src.Key}
 	if dir := e.dashShims(env["PATH"]); dir != "" && e.shimSock != "" {
@@ -398,7 +525,7 @@ func (e *Engine) execDash(ctx context.Context, d store.Dashboard, src dash.Sourc
 		run.State = dash.RunFailed
 		note = strings.TrimSpace(fmt.Sprintf("It ran longer than %d seconds, so CloudBuddy stopped it.\n%s", src.TimeoutSeconds, note))
 	case ctx.Err() != nil:
-		run.State, note = dash.RunFailed, "CloudBuddy stopped while this command ran."
+		run.State, note = dash.RunFailed, stoppedNote(ctx)
 	case code != 0:
 		run.State = dash.RunFailed
 	default:
@@ -411,6 +538,44 @@ func (e *Engine) execDash(ctx context.Context, d store.Dashboard, src dash.Sourc
 		note = strings.TrimSpace("CloudBuddy stopped " + strings.Join(stopped, ", ") + " inside this command, because dashboards run with nobody watching.\n" + note)
 	}
 	run.Note, _ = mask.Cap(note, 8<<10)
+}
+
+func stoppedNote(ctx context.Context) string {
+	if errors.Is(context.Cause(ctx), errDashStopped) {
+		return "You paused or deleted the dashboard, so CloudBuddy stopped this command."
+	}
+	return "CloudBuddy stopped while this command ran."
+}
+
+// killDashLeftovers stops dashboard commands an earlier CloudBuddy left
+// running when it stopped or crashed (best effort: a process can clear its
+// own environment).
+func (e *Engine) killDashLeftovers() int {
+	out, err := exec.Command("/bin/ps", "-Ewwax", "-o", "pid=,command=").Output()
+	if err != nil {
+		return 0
+	}
+	n := 0
+	self := os.Getpid()
+	for _, line := range strings.Split(string(out), "\n") {
+		i := strings.Index(line, "CB_DASH_MARK=")
+		if i < 0 {
+			continue
+		}
+		mark := strings.Fields(line[i+len("CB_DASH_MARK="):])
+		if len(mark) > 0 && mark[0] == e.cfg.Epoch {
+			continue
+		}
+		f := strings.Fields(line)
+		pid, err := strconv.Atoi(f[0])
+		if err != nil || pid == self {
+			continue
+		}
+		if syscall.Kill(pid, syscall.SIGKILL) == nil {
+			n++
+		}
+	}
+	return n
 }
 
 // capBuf keeps the first max bytes written (or the last, with keepEnd).
@@ -610,13 +775,13 @@ func (e *Engine) DashboardTool(ctx context.Context, runID, toolUseID, tool strin
 	case "save_dashboard":
 		return e.dashSave(ctx, r, toolUseID, args)
 	case "list_dashboards":
-		return e.dashList(ctx)
+		return e.dashList(ctx, r)
 	case "get_dashboard":
 		var in struct {
 			ID string `json:"id"`
 		}
 		_ = json.Unmarshal(args, &in)
-		return e.dashGet(ctx, strings.TrimSpace(in.ID))
+		return e.dashGet(ctx, r, strings.TrimSpace(in.ID))
 	}
 	return dashErr("CloudBuddy has no tool called %s.", tool)
 }
@@ -647,8 +812,8 @@ func (e *Engine) dashSave(ctx context.Context, r *Run, toolUseID string, args js
 	isNew := id == ""
 	if isNew {
 		id = store.NewID("db")
-	} else if _, err := e.st.GetDashboard(ctx, id); err != nil {
-		return dashErr("There's no dashboard with id %q. Use list_dashboards to find it, or leave id out to make a new one.", id)
+	} else if old, err := e.st.GetDashboard(ctx, id); err != nil || !dashInScope(old, r) {
+		return dashErr("There's no dashboard with id %q in this chat's project. Use list_dashboards to find it, or leave id out to make a new one. A dashboard from another project is changed from the chat that built it.", id)
 	}
 	b, _ := json.Marshal(in.Spec)
 	if err := e.st.SaveDashboard(ctx, store.Dashboard{ID: id, Title: in.Spec.Title, Description: in.Spec.Description,
@@ -784,16 +949,37 @@ func preview(s string, n int) string {
 	return s
 }
 
-func (e *Engine) dashList(ctx context.Context) DashToolResult {
+// dashInScope: a chat's agent sees and changes the dashboards it built, and
+// those of its own project folders, not every dashboard on the computer
+// (Codex review of D-067).
+func dashInScope(d store.Dashboard, r *Run) bool {
+	if d.ConversationID != "" && d.ConversationID == r.ConvID {
+		return true
+	}
+	for _, f := range r.projectFolders() {
+		if d.Workdir == f || strings.HasPrefix(d.Workdir, f+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) dashList(ctx context.Context, r *Run) DashToolResult {
 	all, err := e.st.Dashboards(ctx)
 	if err != nil {
 		return dashErr("CloudBuddy couldn't list the dashboards: %v", err)
 	}
-	if len(all) == 0 {
-		return DashToolResult{Text: "There are no dashboards yet. Use save_dashboard to make one."}
+	var mine []store.Dashboard
+	for _, d := range all {
+		if dashInScope(d, r) {
+			mine = append(mine, d)
+		}
+	}
+	if len(mine) == 0 {
+		return DashToolResult{Text: "There are no dashboards for this chat's project yet. Use save_dashboard to make one."}
 	}
 	var b strings.Builder
-	for _, d := range all {
+	for _, d := range mine {
 		var spec dash.Spec
 		_ = json.Unmarshal(d.Spec, &spec)
 		fmt.Fprintf(&b, "- id %s: “%s”, refreshes every %s, folder %s\n", d.ID, d.Title, dash.RefreshLabel(time.Duration(d.RefreshSeconds)*time.Second), d.Workdir)
@@ -808,9 +994,9 @@ func (e *Engine) dashList(ctx context.Context) DashToolResult {
 	return DashToolResult{Text: b.String()}
 }
 
-func (e *Engine) dashGet(ctx context.Context, id string) DashToolResult {
+func (e *Engine) dashGet(ctx context.Context, r *Run, id string) DashToolResult {
 	d, err := e.st.GetDashboard(ctx, id)
-	if err != nil {
+	if err != nil || !dashInScope(d, r) {
 		return dashErr("There's no dashboard with id %q. Use list_dashboards to find it.", id)
 	}
 	var spec map[string]any
@@ -1002,6 +1188,9 @@ func (e *Engine) SetDashboardSchedule(ctx context.Context, id, refresh string, p
 	if err := e.st.SetDashboardSchedule(ctx, id, int(every/time.Second), paused); err != nil {
 		return err
 	}
+	if paused {
+		e.stopDashboard(id)
+	}
 	e.bus.Dashboard(id)
 	return nil
 }
@@ -1010,7 +1199,11 @@ func (e *Engine) SetDashboardSchedule(ctx context.Context, id, refresh string, p
 // a read, tied to the command, its folder and the files it runs now. It
 // can't make a command that can never run from a dashboard run: that is
 // decided again on every run.
-func (e *Engine) AllowDashboardSource(ctx context.Context, id, key string, allow bool) error {
+// ErrDashChanged: the command the user answered for isn't the one stored
+// any more (the agent changed it after the page loaded).
+var ErrDashChanged = errors.New("the command changed")
+
+func (e *Engine) AllowDashboardSource(ctx context.Context, id, key string, allow bool, shownCommand, shownCwd string) error {
 	d, err := e.st.GetDashboard(ctx, id)
 	if err != nil {
 		return err
@@ -1027,8 +1220,13 @@ func (e *Engine) AllowDashboardSource(ctx context.Context, id, key string, allow
 	if err != nil {
 		return err
 	}
+	// the answer is for what the page showed, never for a replacement
+	if shownCommand != maskStr(src.Command) || shownCwd != cwd {
+		return ErrDashChanged
+	}
+	env, _ := (&dashEnvs{e: e, m: map[string]dashEnv{}}).get(cwd)
 	if err := e.st.SetDashboardApproval(ctx, id, store.DashboardApproval{SourceKey: key, Command: src.Command, Cwd: cwd,
-		ExecDigest: filesDigest(src.Command, cwd), Allowed: allow}); err != nil {
+		ExecDigest: dashDigest(src.Command, cwd, env, dashRun(d, env).projectFolders()), Allowed: allow}); err != nil {
 		return err
 	}
 	e.bus.Dashboard(id)
@@ -1047,6 +1245,7 @@ func (e *Engine) RefreshDashboardSoon(id string) {
 
 // DeleteDashboard removes a dashboard and its history.
 func (e *Engine) DeleteDashboard(ctx context.Context, id string) error {
+	e.stopDashboard(id)
 	if err := e.st.DeleteDashboard(ctx, id); err != nil {
 		return err
 	}

@@ -87,7 +87,7 @@ export const api = {
     call<DashboardDetail>('PUT', `/api/dashboards/${enc(id)}/schedule`, input),
   refreshDashboard: (id: string) => call<void>('POST', `/api/dashboards/${enc(id)}/refresh`),
   /** The user's answer for a command that isn't a read: run it on the timer, or not. */
-  decideDashboardSource: (id: string, key: string, decision: 'allow' | 'deny') =>
-    call<DashboardDetail>('POST', `/api/dashboards/${enc(id)}/sources/${enc(key)}/decision`, { decision }),
+  decideDashboardSource: (id: string, key: string, decision: 'allow' | 'deny', shown: { command: string; cwd: string }) =>
+    call<DashboardDetail>('POST', `/api/dashboards/${enc(id)}/sources/${enc(key)}/decision`, { decision, ...shown }),
   deleteDashboard: (id: string) => call<void>('DELETE', `/api/dashboards/${enc(id)}`),
 }

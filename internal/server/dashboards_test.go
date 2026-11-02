@@ -2,9 +2,11 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -129,8 +131,12 @@ func TestDashboardEndToEnd(t *testing.T) {
 		t.Errorf("counts: needsOk=%d failing=%d", d.NeedsOK, d.Failing)
 	}
 
+	// an answer for a command the page didn't show is refused
+	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/sources/users/decision", map[string]string{"decision": "allow", "command": "./other.sh", "cwd": users.Cwd}, nil); st != 409 {
+		t.Fatalf("allowing a command the page didn't show: %d", st)
+	}
 	// the user allows the script: it runs
-	if st, b := e.do("POST", "/api/dashboards/"+app.ID+"/sources/users/decision", map[string]string{"decision": "allow"}, nil); st != 200 {
+	if st, b := e.do("POST", "/api/dashboards/"+app.ID+"/sources/users/decision", map[string]string{"decision": "allow", "command": users.Command, "cwd": users.Cwd}, nil); st != 200 {
 		t.Fatalf("allow: %d %s", st, b)
 	}
 	d = e.waitDash(app.ID, "the script to run", func(d dash.Detail) bool {
@@ -144,10 +150,12 @@ func TestDashboardEndToEnd(t *testing.T) {
 		t.Errorf("approval: %+v", s.Approval)
 	}
 	// allowing can't make a delete run
-	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/sources/cleanup/decision", map[string]string{"decision": "allow"}, nil); st != 200 {
+	cleanup := source(d, "cleanup")
+	before := cleanup.LastRun.At
+	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/sources/cleanup/decision", map[string]string{"decision": "allow", "command": cleanup.Command, "cwd": cleanup.Cwd}, nil); st != 200 {
 		t.Fatalf("allow cleanup: %d", st)
 	}
-	d = e.waitDash(app.ID, "a refresh", func(d dash.Detail) bool { return true })
+	d = e.waitDash(app.ID, "the refresh after the OK", func(d dash.Detail) bool { return source(d, "cleanup").LastRun.At.After(before) })
 	if s := source(d, "cleanup"); s.LastRun.State != dash.RunBlocked {
 		t.Errorf("a delete ran after an OK: %+v", s.LastRun)
 	}
@@ -177,7 +185,7 @@ func TestDashboardEndToEnd(t *testing.T) {
 	if st, _ := e.do("PUT", "/api/dashboards/"+app.ID+"/schedule", map[string]any{"refresh": "10s"}, nil); st != 400 {
 		t.Errorf("too often accepted: %d", st)
 	}
-	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/sources/users/decision", map[string]string{"decision": "allow"}, map[string]string{"Origin": "http://evil.example"}); st != 403 {
+	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/sources/users/decision", map[string]string{"decision": "allow", "command": users.Command, "cwd": users.Cwd}, map[string]string{"Origin": "http://evil.example"}); st != 403 {
 		t.Errorf("another origin could allow a command: %d", st)
 	}
 	if st, _ := e.do("POST", "/gate/dashboards/tool", map[string]any{"tool": "list_dashboards"}, nil); st != 403 {
@@ -189,4 +197,60 @@ func TestDashboardEndToEnd(t *testing.T) {
 	if st, _ := e.do("GET", "/api/dashboards/"+app.ID, nil, nil); st != 404 {
 		t.Errorf("deleted dashboard still there: %d", st)
 	}
+}
+
+// Deleting a dashboard stops the command it is running (Codex review of D-067).
+func TestDashboardDeleteStopsCommands(t *testing.T) {
+	t.Setenv("CB_PLAIN_ENV", "1")
+	e := newEnv(t, filepath.Join(repoRoot(), "testdata", "scenarios", "dashboard.json"))
+	pidFile := filepath.Join(e.work, "slow.pid")
+	if err := os.WriteFile(filepath.Join(e.work, "status.json"), []byte(`{"state":"ok","regions":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.work, "count-users.sh"), []byte("#!/bin/sh\necho $$ > slow.pid\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, b := e.do("POST", "/api/conversations", map[string]string{"agent": "fake", "workdir": e.work, "text": "Make me a dashboard"}, nil)
+	if st != 200 {
+		t.Fatalf("create: %d %s", st, b)
+	}
+	var created struct{ ID string }
+	_ = json.Unmarshal(b, &created)
+	e.waitFor(created.ID, "the run to end", func(d model.ConversationDetail) bool { return d.Status == model.ConvDone })
+	_, b = e.do("GET", "/api/dashboards", nil, nil)
+	var list []dash.Summary
+	_ = json.Unmarshal(b, &list)
+	if len(list) != 1 {
+		t.Fatalf("list: %s", b)
+	}
+	id := list[0].ID
+	users := source(e.dashboard(id), "users")
+	if st, _ := e.do("POST", "/api/dashboards/"+id+"/sources/users/decision", map[string]string{"decision": "allow", "command": users.Command, "cwd": users.Cwd}, nil); st != 200 {
+		t.Fatalf("allow: %d", st)
+	}
+	var pid int
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if raw, err := os.ReadFile(pidFile); err == nil {
+			if _, err := fmt.Sscanf(strings.TrimSpace(string(raw)), "%d", &pid); err == nil && pid > 0 {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if pid == 0 {
+		t.Fatal("the slow command never started")
+	}
+	if st, _ := e.do("DELETE", "/api/dashboards/"+id, nil, nil); st != 204 {
+		t.Fatalf("delete: %d", st)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if syscall.Kill(pid, 0) != nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+	t.Fatal("the command kept running after the dashboard was deleted")
 }

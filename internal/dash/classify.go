@@ -71,6 +71,10 @@ func Classify(in Input) Class {
 		return never(d.Provider + " is turned off in Connections.")
 	}
 
+	// Only shell CloudBuddy reads fully can be a read: zsh can hide code in
+	// glob qualifiers, substitutions and the like (Codex review of D-067).
+	plain := recognize.PlainShell(in.Command)
+
 	local := ""
 	if in.LocalProgram != nil {
 		local = in.LocalProgram(in.Command)
@@ -80,7 +84,15 @@ func Classify(in Input) Class {
 	if sql.Write != "" {
 		return never("Dashboards only fetch data, and this query changes data (" + strings.ToUpper(sql.Write) + ").")
 	}
-	if sql.Engine != "" && local == "" {
+	if sql.Engine == "psql" {
+		// a Postgres service file can turn the read-only session back off
+		for _, k := range []string{"PGSERVICE", "PGSERVICEFILE", "PGSYSCONFDIR"} {
+			if in.Env.AgentEnv[k] != "" {
+				return needs("It connects through a Postgres service file (" + k + "), which can turn CloudBuddy's read-only session off.")
+			}
+		}
+	}
+	if sql.Engine != "" && local == "" && plain {
 		c.Verdict, c.SQL, c.Provider = Read, sql.Engine, "Database"
 		return c
 	}
@@ -115,6 +127,8 @@ func Classify(in Input) Class {
 	}
 
 	switch {
+	case !plain:
+		return needs("It uses shell features CloudBuddy can't read (like a zsh glob qualifier or a substitution), so it can't be sure this only reads.")
 	case local != "":
 		return needs("It runs " + local + " from the project, which can change at any time.")
 	case recognize.DashboardWrites(in.Command):

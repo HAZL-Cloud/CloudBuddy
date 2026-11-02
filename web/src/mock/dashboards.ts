@@ -219,6 +219,7 @@ export function dashboardRoute(m: DashMock, method: string, fullPath: string, b:
     const src = d.sources.find((s) => s.key === key)
     if (!src) throw new ApiError(404, 'not_found')
     const allow = b.decision === 'allow'
+    if (b.command !== src.command || b.cwd !== src.cwd) throw new ApiError(409, 'changed')
     src.approval = { allowed: allow, decidedAt: new Date().toISOString() }
     if (src.verdict === 'needs_ok') {
       src.lastRun = allow
