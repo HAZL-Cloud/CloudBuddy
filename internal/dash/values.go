@@ -106,11 +106,11 @@ func sourceValue(spec Spec, key, path string, runs map[string]Runs, tv *TileValu
 	}
 	switch r.Latest.State {
 	case RunWaiting:
-		tv.State, tv.Message = "waiting", "Waiting for your OK to run this command on the timer."
+		tv.State, tv.Message = "waiting", "CloudBuddy runs this tile's command once you allow it."
 	case RunBlocked:
 		tv.State, tv.Message = "blocked", r.Latest.Note
 	case RunDeclined:
-		tv.State, tv.Message = "declined", "You didn't allow this command, so it doesn't run."
+		tv.State, tv.Message = "declined", "So it doesn't run, and this tile stays empty."
 	}
 	if tv.State != "" {
 		return nil, nil, false
@@ -291,13 +291,13 @@ func exitStatus(t Tile, runs map[string]Runs, tv TileValue) TileValue {
 	}
 	switch r.Latest.State {
 	case RunWaiting:
-		tv.State, tv.Message = "waiting", "Waiting for your OK to run this command on the timer."
+		tv.State, tv.Message = "waiting", "CloudBuddy runs this tile's command once you allow it."
 		return tv
 	case RunBlocked:
 		tv.State, tv.Message = "blocked", r.Latest.Note
 		return tv
 	case RunDeclined:
-		tv.State, tv.Message = "declined", "You didn't allow this command, so it doesn't run."
+		tv.State, tv.Message = "declined", "So it doesn't run, and this tile stays empty."
 		return tv
 	}
 	tv.State = "ok"

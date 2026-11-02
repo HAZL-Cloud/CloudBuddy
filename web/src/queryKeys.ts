@@ -6,4 +6,7 @@ export const keys = {
   connections: ['connections'] as const,
   projects: ['projects'] as const,
   settings: ['settings'] as const,
+  dashboards: ['dashboards'] as const,
+  dashboard: (id: string) => ['dashboard', id] as const,
+  dashboardRange: (id: string, range: string) => ['dashboard', id, range] as const,
 }

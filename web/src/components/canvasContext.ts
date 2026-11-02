@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { Decision, Step } from '../types'
+import type { Decision, Step, StepApp } from '../types'
 import type { Deciding } from './StepParts'
 
 /** What the cards and edges inside React Flow need from the panel, without putting it in every node object. */
@@ -18,6 +18,8 @@ export interface CanvasView {
   onTrace: (stepId: string, sources: string[] | null) => void
   /** Select a step and bring it into view, switching the filter if it is hidden. */
   onShow: (stepId: string) => void
+  /** Open what a step made, such as a dashboard (D-067). */
+  onOpenApp: (app: StepApp) => void
 }
 
 const empty: CanvasView = {
@@ -31,6 +33,7 @@ const empty: CanvasView = {
   onDecide: () => {},
   onTrace: () => {},
   onShow: () => {},
+  onOpenApp: () => {},
 }
 
 export const CanvasViewContext = createContext<CanvasView>(empty)

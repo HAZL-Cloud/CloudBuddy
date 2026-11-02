@@ -3,6 +3,8 @@ import type {
   Connection,
   ConversationDetail,
   ConversationSummary,
+  DashboardDetail,
+  DashboardSummary,
   Decision,
   Project,
   ProjectInput,
@@ -79,4 +81,13 @@ export const api = {
   connections: () => call<ConnectionsResponse>('GET', '/api/connections'),
   scanConnections: () => call<ConnectionsResponse>('POST', '/api/connections/scan'),
   setRule: (id: string, rule: Rule) => call<Connection>('PUT', `/api/connections/${enc(id)}/rule`, { rule }),
+  dashboards: () => call<DashboardSummary[]>('GET', '/api/dashboards'),
+  dashboard: (id: string, range: string) => call<DashboardDetail>('GET', `/api/dashboards/${enc(id)}?range=${enc(range)}`),
+  setDashboardSchedule: (id: string, input: { refresh: string; paused: boolean }) =>
+    call<DashboardDetail>('PUT', `/api/dashboards/${enc(id)}/schedule`, input),
+  refreshDashboard: (id: string) => call<void>('POST', `/api/dashboards/${enc(id)}/refresh`),
+  /** The user's answer for a command that isn't a read: run it on the timer, or not. */
+  decideDashboardSource: (id: string, key: string, decision: 'allow' | 'deny') =>
+    call<DashboardDetail>('POST', `/api/dashboards/${enc(id)}/sources/${enc(key)}/decision`, { decision }),
+  deleteDashboard: (id: string) => call<void>('DELETE', `/api/dashboards/${enc(id)}`),
 }

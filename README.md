@@ -16,6 +16,7 @@ You approve or deny right on the canvas.
 - **Projects**: a name and the folders that belong together, such as an app and its infrastructure code. Start a chat in a project and the agent has all of them.
 - **Canvas** beside the chat, which you can fold away to give the chat the room: one card per cloud step, left to right in order, one lane per provider. Back-to-back reads stack into one card. A line runs from something a step created to each later step that builds on it; a value found earlier is a chip you can hover to trace.
 - **Approvals** before deletes, payments, sends and live-mode changes, with what will be lost and the agent's reason.
+- **Dashboards**: ask in a chat for numbers you want to keep an eye on (user counts, signups, revenue, errors) and the agent saves a dashboard. CloudBuddy then reruns its commands itself on a timer, with no agent and no tokens, and draws numbers with trends, line charts, bars, tables and status tiles. Commands it can't tell only read wait for your OK once; deletes, payments and sends can never run from a dashboard.
 - **History**: every chat keeps its canvas. Reopen it, replay it step by step.
 - **Connections**: which CLIs and MCP servers the agent can reach, who they are signed in as, and a rule per connection (Off, Read-only, Ask before every change…).
 

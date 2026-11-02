@@ -19,7 +19,7 @@ import {
 import { prefersReducedMotion, useElementSize } from '../hooks'
 import { RESULT_ID, computeLayout, type StepFilter } from '../layout'
 import { plural } from '../format'
-import type { ConversationDetail, Decision, Step } from '../types'
+import type { ConversationDetail, Decision, Step, StepApp } from '../types'
 import { CanvasViewContext, type CanvasView } from './canvasContext'
 import { EDGE_TYPES, EdgeMarkers, NODE_TYPES } from './canvasNodes'
 import { ColumnRuler, LaneRail, TallyPills, ZoomControls } from './CanvasChrome'
@@ -48,8 +48,11 @@ export interface CanvasPanelProps {
   collapsed: boolean
   onCollapse: () => void
   onExpand: () => void
+  /** Open what a step made, such as a dashboard (D-067). */
+  onOpenApp?: (app: StepApp) => void
 }
 
+const nothing = () => {}
 const NO_STEPS: Step[] = []
 const REPLAY_MS = 1050
 const DEFAULT_ZOOM = 0.86
@@ -80,7 +83,7 @@ function CanvasRail({ steps, onExpand }: { steps: Step[]; onExpand: () => void }
   )
 }
 
-function CanvasInner({ detail, mobile, focusRequest, onFocusHandled, deciding, onDecide, onCollapse }: CanvasPanelProps) {
+function CanvasInner({ detail, mobile, focusRequest, onFocusHandled, deciding, onDecide, onCollapse, onOpenApp }: CanvasPanelProps) {
   const rf = useReactFlow()
   const frameRef = useRef<HTMLDivElement>(null)
   const size = useElementSize(frameRef)
@@ -311,8 +314,8 @@ function CanvasInner({ detail, mobile, focusRequest, onFocusHandled, deciding, o
   // ---- Render --------------------------------------------------------------------------------------------------
 
   const view = useMemo<CanvasView>(
-    () => ({ numbers: layout.numbers, selectedId, viewIndex, deciding, traced, isNew, onSelect: select, onDecide, onTrace, onShow }),
-    [layout.numbers, selectedId, viewIndex, deciding, traced, isNew, select, onDecide, onTrace, onShow],
+    () => ({ numbers: layout.numbers, selectedId, viewIndex, deciding, traced, isNew, onSelect: select, onDecide, onTrace, onShow, onOpenApp: onOpenApp ?? nothing }),
+    [layout.numbers, selectedId, viewIndex, deciding, traced, isNew, select, onDecide, onTrace, onShow, onOpenApp],
   )
   const selectedStep = selectedId ? steps.find((s) => s.id === selectedId) : undefined
   const empty = layout.cloud.length === 0 && !result

@@ -5,6 +5,7 @@ import type {
   ConnectionsResponse,
   ConversationDetail,
   ConversationSummary,
+  DashboardDetail,
   Decision,
   Project,
   ProjectInput,
@@ -13,6 +14,7 @@ import type {
   Step,
   StreamEvent,
 } from '../types'
+import { dashboardRoute, seedDashboards } from './dashboards'
 import { seedConnections, seedConversations, seedProjects, seedSettings } from './data'
 
 // A stand-in for the Go server, used when VITE_MOCK=1 and by the tests. It answers the same paths with the same
@@ -28,6 +30,7 @@ interface MockState {
   projects: Project[]
   settings: Settings
   connections: ConnectionsResponse
+  dashboards: DashboardDetail[]
   /** Multiplies every delay. Tests set it to 0. */
   speed: number
   counter: number
@@ -41,6 +44,7 @@ const state: MockState = {
   projects: seedProjects(),
   settings: seedSettings(),
   connections: seedConnections(),
+  dashboards: seedDashboards(),
   speed: 1,
   counter: 0,
   picker: 'pick',
@@ -68,12 +72,14 @@ export function resetMock(): void {
   state.projects = seedProjects()
   state.settings = seedSettings()
   state.connections = seedConnections()
+  state.dashboards = seedDashboards()
   state.picker = 'pick'
   state.picks = 0
   emit({ type: 'conversations' })
   emit({ type: 'connections' })
   emit({ type: 'projects' })
   emit({ type: 'settings' })
+  emit({ type: 'dashboards' })
 }
 
 function later(ms: number, fn: () => void): void {
@@ -390,6 +396,12 @@ export async function mockRequest({ method, path, body }: MockRequest): Promise<
     state.connections.scannedAt = now()
     emit({ type: 'connections' })
     return clone(state.connections)
+  }
+  if (path.startsWith('/api/dashboards')) {
+    const dm = { dashboards: state.dashboards, later, emit }
+    const res = dashboardRoute(dm, method, path, b)
+    state.dashboards = dm.dashboards
+    if (res.hit) return res.value
   }
   if ((m = path.match(/^\/api\/connections\/([^/]+)\/rule$/)) && method === 'PUT') {
     return setRule(decodeURIComponent(m[1] as string), b.rule as Rule)
