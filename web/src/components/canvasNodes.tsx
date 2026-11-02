@@ -44,6 +44,7 @@ export function StepNode({ data }: NodeProps<StepFlowNode>) {
         traced={view.traced.has(step.id)}
         onTrace={view.onTrace}
         onShow={view.onShow}
+        onOpenApp={view.onOpenApp}
       />
     </>
   )

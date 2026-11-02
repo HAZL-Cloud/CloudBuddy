@@ -52,6 +52,19 @@ Codex is paused for now (D-066).
 
 Approvals are **single use**. Each is tied to the exact command (and, for approved project code, the hash of the files it runs), consumed once, and cancelled if the run ends. Nothing is ever approved by waiting.
 
+## Dashboards (D-067)
+
+A chat can save a **dashboard**: commands plus tiles. CloudBuddy then reruns the commands itself on a timer, with nobody watching, so the rules are stricter than in a chat. CloudBuddy decides again on **every run**:
+
+1. Anything aimed at CloudBuddy itself, a background command, or a connection turned **Off**: never runs.
+2. **A delete, Can't undo, Moves money, Reaches people, a send, or a change in live mode can never be a dashboard command**, not even with your OK. The same goes for a database query that changes data (`DELETE`, `UPDATE`, `DROP`…).
+3. **Reads run by themselves:** cloud CLI calls CloudBuddy recognizes as reads, text tools on project files (`cat`, `grep`, `wc`, `jq`), and database reads: `psql` with one `SELECT` in `-c` (CloudBuddy runs it with `default_transaction_read_only=on`, so the database refuses changes) and `sqlite3 -readonly` with one `SELECT`.
+4. **Everything else waits for your OK once** on the dashboard page: scripts and programs, web requests, commands that write files, programs that live in the project folder, anything CloudBuddy can't read. The OK is tied to the exact command, its folder and the hash of the files it runs; if any of them changes, it asks again.
+
+Dashboard commands run like chat commands: your login environment plus the folder's direnv setup, `zsh -f`, the same sandbox profile, a time limit (60 seconds unless the dashboard says otherwise, 5 minutes at most), and output masked and capped before it is stored. Inside a command, the CLI shims stop any call that would ask in a chat, because nobody is there to answer. Saving a dashboard runs nothing that these rules don't allow; the agent has no tool to delete one. Numbers are kept for 30 days.
+
+Limits: an allowed script can still do things CloudBuddy can't see (SDK calls, full-path CLIs), every time it runs, like any approved project code. Approvals for dashboards last until the command or its files change, unlike a chat's single-use approvals.
+
 ## Fail closed
 
 - A hook that crashes, can't start, or times out blocks the call.

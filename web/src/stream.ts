@@ -18,6 +18,8 @@ export function parseStreamEvent(raw: string): StreamEvent | null {
   if (ev.type === 'connections') return { type: 'connections' }
   if (ev.type === 'projects') return { type: 'projects' }
   if (ev.type === 'settings') return { type: 'settings' }
+  if (ev.type === 'dashboards') return { type: 'dashboards' }
+  if (ev.type === 'dashboard' && typeof ev.dashboardId === 'string') return { type: 'dashboard', dashboardId: ev.dashboardId }
   return null
 }
 
@@ -39,6 +41,13 @@ export function applyStreamEvent(client: QueryClient, ev: StreamEvent): void {
       break
     case 'settings':
       void client.invalidateQueries({ queryKey: keys.settings })
+      break
+    case 'dashboards':
+      void client.invalidateQueries({ queryKey: keys.dashboards })
+      break
+    case 'dashboard':
+      void client.invalidateQueries({ queryKey: keys.dashboard(ev.dashboardId) })
+      void client.invalidateQueries({ queryKey: keys.dashboards })
       break
   }
 }

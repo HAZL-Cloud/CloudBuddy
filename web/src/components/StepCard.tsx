@@ -1,7 +1,7 @@
 import type { KeyboardEvent, MouseEvent } from 'react'
 import { clock } from '../format'
 import type { Chip } from '../layout'
-import type { Decision, Step } from '../types'
+import type { Decision, Step, StepApp } from '../types'
 import { Icon } from './Icon'
 import {
   ActionChip,
@@ -37,6 +37,8 @@ export interface StepCardProps {
   traced?: boolean
   onTrace?: (stepId: string, sources: string[] | null) => void
   onShow?: (stepId: string) => void
+  /** Open what the step made, such as a dashboard (D-067). */
+  onOpenApp?: (app: StepApp) => void
 }
 
 const NONE: never[] = []
@@ -58,6 +60,7 @@ export function StepCard({
   traced = false,
   onTrace = nothing,
   onShow = nothing,
+  onOpenApp,
 }: StepCardProps) {
   const approval = step.approval
   const asking = step.status === 'waiting' && approval?.state === 'pending'
@@ -108,7 +111,15 @@ export function StepCard({
         <span className="time mono">{clock(step.startedAt)}</span>
       </div>
       <div className="card-title">{step.title}</div>
-      {step.resource && <div className="card-res">{step.resource}</div>}
+      {step.resource && !step.app && <div className="card-res">{step.resource}</div>}
+      {step.app && onOpenApp && step.status !== 'denied' && (
+        <div className="card-app">
+          <button type="button" className="btn primary" onClick={() => step.app && onOpenApp(step.app)}>
+            <Icon name="grid" small />
+            Open dashboard
+          </button>
+        </div>
+      )}
       <TagList tags={step.tags} />
       <AdapterNote step={step} />
       <ChipList chips={chips} numbers={numbers} onTrace={(sources) => onTrace(step.id, sources)} onShow={onShow} />

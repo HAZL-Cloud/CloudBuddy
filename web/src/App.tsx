@@ -4,6 +4,7 @@ import { ApiError } from './api'
 import { CanvasPanel, type FocusRequest } from './components/CanvasPanel'
 import { ChatPanel, type Draft } from './components/ChatPanel'
 import { ConnectionsPage } from './components/ConnectionsPage'
+import { DashboardsPage } from './components/DashboardsPage'
 import { Icon } from './components/Icon'
 import { ProjectDialog } from './components/ProjectDialog'
 import { SettingsPage } from './components/SettingsPage'
@@ -11,10 +12,10 @@ import { Sidebar, type NavKey, type Page } from './components/Sidebar'
 import type { Deciding } from './components/StepParts'
 import { useToast } from './components/Toast'
 import { useMediaQuery, useStoredState } from './hooks'
-import { useConnections, useConversation, useConversations, useDecide, useProjects, useSession, useSettings } from './queries'
+import { useConnections, useConversation, useConversations, useDashboards, useDecide, useProjects, useSession, useSettings } from './queries'
 import { connectStream } from './stream'
 import { applyTheme, THEME_KEY, type Theme } from './theme'
-import type { ConversationSummary, Decision, Project, Step } from './types'
+import type { ConversationSummary, Decision, Project, Step, StepApp } from './types'
 
 const NO_CONVERSATIONS: ConversationSummary[] = []
 const NO_PROJECTS: Project[] = []
@@ -31,6 +32,7 @@ export function App() {
   const projectsQuery = useProjects()
   const settings = useSettings()
   const decide = useDecide()
+  const dashboards = useDashboards()
 
   const [page, setPage] = useState<Page>('chat')
   const [view, setView] = useState<'chat' | 'canvas'>('canvas')
@@ -43,6 +45,7 @@ export function App() {
   const [storedChoice, setTheme] = useStoredState<Theme>(THEME_KEY, 'system')
   const theme: Theme = storedChoice === 'light' || storedChoice === 'dark' ? storedChoice : 'system'
   const [focus, setFocus] = useState<FocusRequest | null>(null)
+  const [dashId, setDashId] = useState<string | null>(null)
   const nonce = useRef(0)
 
   useEffect(() => connectStream(client), [client])
@@ -64,6 +67,7 @@ export function App() {
   const agents = session.data?.agents ?? []
 
   const waitingTotal = conversations.reduce((sum, c) => sum + c.waitingCount, 0)
+  const dashWaiting = (dashboards.data ?? []).reduce((sum, d) => sum + d.needsOk, 0)
   useEffect(() => {
     document.title = waitingTotal > 0 ? `(${waitingTotal}) Waiting for you · CloudBuddy` : 'CloudBuddy'
   }, [waitingTotal])
@@ -111,6 +115,13 @@ export function App() {
     setFocus({ convId, target: { stepId }, nonce: ++nonce.current })
   }
   const onFocusHandled = useCallback((n: number) => setFocus((f) => (f?.nonce === n ? null : f)), [])
+  // A step's card opens what it made: a dashboard (D-067).
+  const openApp = useCallback((app: StepApp) => {
+    if (app.kind !== 'dashboard') return
+    setNavOpen(false)
+    setDashId(app.id)
+    setPage('dashboards')
+  }, [])
 
   const goToChat = () => {
     setNavOpen(false)
@@ -138,7 +149,10 @@ export function App() {
   const onNav = (key: NavKey) => {
     setNavOpen(false)
     if (key === 'chats') setPage('chat')
-    else if (key === 'connections' || key === 'settings') setPage(key)
+    else if (key === 'dashboards') {
+      setPage('dashboards')
+      setDashId(null)
+    } else if (key === 'connections' || key === 'settings') setPage(key)
     else {
       const waiting = conversations.find((c) => c.waitingCount > 0)
       if (!waiting) return toast('Nothing is waiting for your approval.')
@@ -197,6 +211,8 @@ export function App() {
         page={page}
         waitingTotal={waitingTotal}
         connectionCount={connections.data ? connections.data.cli.length + connections.data.mcp.length : null}
+        dashboardCount={dashboards.data ? dashboards.data.length : null}
+        dashboardWaiting={dashWaiting}
         agents={agents}
         theme={theme}
         onTheme={setTheme}
@@ -267,7 +283,9 @@ export function App() {
         collapsed={collapsed}
         onCollapse={() => setCanvasOpen(false)}
         onExpand={() => setCanvasOpen(true)}
+        onOpenApp={openApp}
       />
+      {page === 'dashboards' && <DashboardsPage selectedId={dashId} onSelect={setDashId} onOpenChat={openChat} onNewChat={newChat} />}
       {page === 'connections' && <ConnectionsPage />}
       {page === 'settings' && (
         <SettingsPage

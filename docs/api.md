@@ -107,6 +107,41 @@ interface Connection {
 }
 ```
 
+### Dashboards (D-067)
+
+A chat's agent saves a dashboard through CloudBuddy's own MCP tools (`cloudbuddy dashboards-mcp`: `save_dashboard`, `list_dashboards`, `get_dashboard`). After that CloudBuddy reruns its commands on a timer; the browser only reads it, changes its schedule, answers for commands that aren't reads, and deletes it. The full shapes are in `web/src/types.ts`.
+
+```ts
+interface Tile {
+  key: string; type: "number" | "line" | "bars" | "table" | "text" | "status"; title: string;
+  source?: string; path?: string;          // which command, and where the value is in its output
+  width: number;                           // 1–4 of a 4-column grid
+  format?: "number" | "currency" | "percent" | "bytes" | "duration"; unit?: string; good?: "up" | "down"; …
+}
+interface TileValue {                      // what a tile shows now, worked out by the server
+  key: string; state: "ok" | "pending" | "waiting" | "blocked" | "declined" | "error";
+  message?: string; stale?: boolean;       // stale: the last refresh failed, this is the last good value
+  number?: number; compare?: { value, at, label }; spark?: Point[];
+  series?: { label, points?: Point[], bars?: Bar[] }[]; bars?: Bar[];
+  rows?: object[]; columns?: TileColumn[]; more?: number; text?: string; status?: "ok" | "warn" | "fail";
+}
+interface DashboardSource {                // one command
+  key: string; label?: string; command: string; cwd: string; format: string;
+  verdict: "" | "read" | "needs_ok" | "never"; reason?: string;
+  approval?: { allowed: boolean; decidedAt: string; changed?: boolean };
+  lastRun?: { state: "ok" | "failed" | "waiting" | "blocked" | "declined"; exitCode?: number; output: string; note?: string; at: string; durationMs: number };
+}
+interface DashboardSummary {
+  id: string; title: string; description: string; conversationId?: string;
+  refresh: string; paused: boolean; running: boolean; lastRunAt?: string; nextRunAt?: string; updatedAt: string;
+  needsOk: number; failing: number; tileCount: number; headlines: { tile: Tile; value: TileValue }[];
+}
+interface DashboardDetail extends DashboardSummary {
+  workdir: string; range: string; tiles: Tile[]; values: TileValue[]; sources: DashboardSource[];
+  refreshChoices: string[]; rangeChoices: { key: string; label: string }[];
+}
+```
+
 ## Endpoints
 
 | Method | Path | Body | Returns |
@@ -129,6 +164,12 @@ interface Connection {
 | GET | `/api/connections` | | `{ scannedAt, cli: Connection[], mcp: Connection[] }` |
 | POST | `/api/connections/scan` | | same as GET |
 | PUT | `/api/connections/:id/rule` | `{ rule }` | `Connection` |
+| GET | `/api/dashboards` | | `DashboardSummary[]` (latest changed first) |
+| GET | `/api/dashboards/:id?range=1h\|24h\|7d\|30d` | | `DashboardDetail`, charts over the range (default 24h) / `404` |
+| PUT | `/api/dashboards/:id/schedule` | `{ refresh, paused }` | `DashboardDetail` / `400` with a message (refresh from 1m to 1d) |
+| POST | `/api/dashboards/:id/refresh` | | `202`, runs every command once now |
+| POST | `/api/dashboards/:id/sources/:key/decision` | `{ decision: "allow" \| "deny" }` | `DashboardDetail`. Records the user's answer for a command that isn't a read, tied to the command, its folder and its files. It can't make a command that can never run from a dashboard run. |
+| DELETE | `/api/dashboards/:id` | | `204`; its history goes too |
 | GET | `/stream` | | Server-Sent Events, see below |
 
 ## Live updates (`GET /stream`)
@@ -141,7 +182,9 @@ type StreamEvent =
   | { type: "conversations" }                           // refetch the list
   | { type: "connections" }                             // refetch connections
   | { type: "projects" }                                // refetch projects
-  | { type: "settings" };                               // refetch settings
+  | { type: "settings" }                                // refetch settings
+  | { type: "dashboards" }                              // refetch the dashboards list
+  | { type: "dashboard"; dashboardId: string };         // refetch that dashboard + the list
 ```
 
 The app treats every event as "refetch this" (TanStack Query invalidation). The server sends a comment ping every 15 seconds.

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 import { keys } from './queryKeys'
-import type { ConnectionsResponse, Decision, ProjectInput, Rule, Settings, Step } from './types'
+import type { ConnectionsResponse, DashboardDetail, Decision, ProjectInput, Rule, Settings, Step } from './types'
 
 export function useSession() {
   return useQuery({ queryKey: keys.session, queryFn: api.session, staleTime: Infinity })
@@ -126,4 +126,54 @@ export function useScanConnections() {
     mutationFn: () => api.scanConnections(),
     onSuccess: (data) => client.setQueryData(keys.connections, data),
   })
+}
+
+// ---------- dashboards (D-067) ----------
+
+export function useDashboards() {
+  return useQuery({ queryKey: keys.dashboards, queryFn: api.dashboards })
+}
+
+/** Keeps the last page on screen while another time range loads. */
+export function useDashboard(id: string | null, range: string) {
+  return useQuery({
+    queryKey: keys.dashboardRange(id ?? '', range),
+    queryFn: () => api.dashboard(id as string, range),
+    enabled: id !== null,
+    placeholderData: (prev) => prev,
+    // the page's "updated 2 min ago" and charts stay current between refreshes
+    refetchInterval: 60_000,
+  })
+}
+
+function useDashboardMutation<V>(fn: (v: V) => Promise<DashboardDetail | void>) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: fn,
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ['dashboard'] })
+      void client.invalidateQueries({ queryKey: keys.dashboards })
+    },
+  })
+}
+
+export function useDashboardSchedule() {
+  return useDashboardMutation(({ id, refresh, paused }: { id: string; refresh: string; paused: boolean }) =>
+    api.setDashboardSchedule(id, { refresh, paused }),
+  )
+}
+
+export function useRefreshDashboard() {
+  return useDashboardMutation((id: string) => api.refreshDashboard(id))
+}
+
+// Never optimistic, like approvals: the page shows what the server says after it answers.
+export function useDecideDashboardSource() {
+  return useDashboardMutation(({ id, key, decision }: { id: string; key: string; decision: 'allow' | 'deny' }) =>
+    api.decideDashboardSource(id, key, decision),
+  )
+}
+
+export function useDeleteDashboard() {
+  return useDashboardMutation((id: string) => api.deleteDashboard(id))
 }

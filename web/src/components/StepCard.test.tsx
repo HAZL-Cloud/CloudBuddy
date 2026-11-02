@@ -29,6 +29,15 @@ function setup(step: Step, over: Partial<StepCardProps> = {}) {
 }
 
 describe('StepCard', () => {
+  it('opens the dashboard a step built, without selecting the card', async () => {
+    const step: Step = { ...find('n5'), provider: 'CloudBuddy', product: 'Dashboards', title: 'Built the dashboard \u201cUsers\u201d', app: { kind: 'dashboard', id: 'db_1', title: 'Users' } }
+    const onOpenApp = vi.fn()
+    const props = setup(step, { onOpenApp })
+    await userEvent.click(screen.getByRole('button', { name: 'Open dashboard' }))
+    expect(onOpenApp).toHaveBeenCalledWith({ kind: 'dashboard', id: 'db_1', title: 'Users' })
+    expect(props.onSelect).not.toHaveBeenCalled()
+  })
+
   it('shows the action, step number, title, resource, facts and status', () => {
     setup(find('n5'))
     expect(screen.getByText('Create')).toBeInTheDocument()

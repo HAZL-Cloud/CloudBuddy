@@ -59,6 +59,14 @@ export interface Step {
   maskedNote?: string
   uses: { fromStepId: string; what: string }[]
   approval?: Approval
+  /** Something the step made that has its own page, such as a dashboard (D-067). */
+  app?: StepApp
+}
+
+export interface StepApp {
+  kind: 'dashboard'
+  id: string
+  title: string
 }
 
 export type ChatItem =
@@ -151,3 +159,128 @@ export type StreamEvent =
   | { type: 'connections' }
   | { type: 'projects' }
   | { type: 'settings' }
+  | { type: 'dashboards' }
+  | { type: 'dashboard'; dashboardId: string }
+
+// ---------- dashboards (D-067, D-068) ----------
+
+export type TileType = 'number' | 'line' | 'bars' | 'table' | 'text' | 'status'
+export type NumberFormat = 'number' | 'currency' | 'percent' | 'bytes' | 'duration'
+
+export interface TileColumn {
+  field: string
+  label?: string
+  format?: NumberFormat
+}
+
+/** One box on a dashboard, as the agent saved it. */
+export interface Tile {
+  key: string
+  type: TileType
+  title: string
+  source?: string
+  path?: string
+  width: number
+  note?: string
+  format?: NumberFormat
+  currency?: string
+  decimals?: number
+  unit?: string
+  good?: 'up' | 'down'
+  compare?: 'previous' | '1h' | '24h' | '7d'
+  series?: { source: string; path?: string; label?: string }[]
+  labelField?: string
+  valueField?: string
+  columns?: TileColumn[]
+  limit?: number
+}
+
+export interface Point {
+  t: string
+  v: number
+}
+export interface Bar {
+  label: string
+  value: number
+}
+export interface SeriesValue {
+  label: string
+  /** A number over time. */
+  points?: Point[]
+  /** One point per row of the output. */
+  bars?: Bar[]
+}
+
+export type TileState = 'ok' | 'pending' | 'waiting' | 'blocked' | 'declined' | 'error'
+
+/** What one tile shows right now. */
+export interface TileValue {
+  key: string
+  state: TileState
+  message?: string
+  stale?: boolean
+  updatedAt?: string
+  number?: number
+  compare?: { value: number; at: string; label: string }
+  spark?: Point[]
+  series?: SeriesValue[]
+  bars?: Bar[]
+  rows?: Record<string, unknown>[]
+  columns?: TileColumn[]
+  more?: number
+  text?: string
+  status?: 'ok' | 'warn' | 'fail'
+}
+
+export type RunState = 'ok' | 'failed' | 'waiting' | 'blocked' | 'declined'
+
+export interface SourceRun {
+  state: RunState
+  exitCode?: number
+  output: string
+  truncated?: boolean
+  note?: string
+  at: string
+  durationMs: number
+}
+
+/** One command of a dashboard. */
+export interface DashboardSource {
+  key: string
+  label?: string
+  command: string
+  cwd: string
+  format: string
+  /** read runs by itself; needs_ok waits for the user's OK once; never can't run from a dashboard. */
+  verdict: '' | 'read' | 'needs_ok' | 'never'
+  reason?: string
+  approval?: { allowed: boolean; decidedAt: string; changed?: boolean }
+  lastRun?: SourceRun
+}
+
+export interface DashboardSummary {
+  id: string
+  title: string
+  description: string
+  conversationId?: string
+  refresh: string
+  paused: boolean
+  running: boolean
+  lastRunAt?: string
+  nextRunAt?: string
+  updatedAt: string
+  needsOk: number
+  failing: number
+  tileCount: number
+  headlines: { tile: Tile; value: TileValue }[]
+}
+
+export interface DashboardDetail extends DashboardSummary {
+  workdir: string
+  range: string
+  tiles: Tile[]
+  values: TileValue[]
+  sources: DashboardSource[]
+  refreshChoices: string[]
+  rangeChoices: { key: string; label: string }[]
+}

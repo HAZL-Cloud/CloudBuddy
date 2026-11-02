@@ -5,11 +5,12 @@ import { AGENT_LABELS } from '../vocab'
 import { Icon, type IconName } from './Icon'
 import { Logo, Wordmark } from './Logo'
 
-export type NavKey = 'chats' | 'approvals' | 'connections' | 'settings'
-export type Page = 'chat' | 'connections' | 'settings'
+export type NavKey = 'chats' | 'approvals' | 'dashboards' | 'connections' | 'settings'
+export type Page = 'chat' | 'dashboards' | 'connections' | 'settings'
 const NAV: [NavKey, IconName, string][] = [
   ['chats', 'chat', 'Chats'],
   ['approvals', 'inbox', 'Approvals'],
+  ['dashboards', 'grid', 'Dashboards'],
   ['connections', 'plug', 'Connections'],
   ['settings', 'gear', 'Settings'],
 ]
@@ -30,6 +31,9 @@ export interface SidebarProps {
   page: Page
   waitingTotal: number
   connectionCount: number | null
+  /** Dashboards, and how many of their commands wait for the user's OK (D-067). */
+  dashboardCount: number | null
+  dashboardWaiting: number
   agents: Agent[]
   theme: Theme
   onTheme: (theme: Theme) => void
@@ -161,6 +165,14 @@ export function Sidebar(p: SidebarProps) {
               </span>
             )}
             {key === 'connections' && p.connectionCount !== null && <span className="badge quiet">{p.connectionCount}</span>}
+            {key === 'dashboards' &&
+              (p.dashboardWaiting > 0 ? (
+                <span className="badge" aria-label={`${p.dashboardWaiting} waiting for your OK`}>
+                  {p.dashboardWaiting}
+                </span>
+              ) : (
+                p.dashboardCount !== null && p.dashboardCount > 0 && <span className="badge quiet">{p.dashboardCount}</span>
+              ))}
           </button>
         ))}
       </nav>
