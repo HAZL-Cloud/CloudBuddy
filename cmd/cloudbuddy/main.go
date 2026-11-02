@@ -5,6 +5,7 @@
 //	cloudbuddy exec           run one gate-released command (started by Claude Code)
 //	cloudbuddy shim <cli>     stand in for a cloud CLI inside a command (D-065)
 //	cloudbuddy mcp-gateway    MCP proxy in front of one server (started by an agent)
+//	cloudbuddy dashboards-mcp CloudBuddy's own MCP tools for dashboards (started by Claude Code)
 //	cloudbuddy version
 package main
 
@@ -31,6 +32,7 @@ import (
 	"cloudbuddy/internal/bus"
 	"cloudbuddy/internal/config"
 	"cloudbuddy/internal/connections"
+	"cloudbuddy/internal/dashmcp"
 	"cloudbuddy/internal/execwrap"
 	"cloudbuddy/internal/hookcmd"
 	"cloudbuddy/internal/mcpgw"
@@ -62,6 +64,8 @@ func main() {
 		os.Exit(shim.Main(args))
 	case "mcp-gateway":
 		os.Exit(mcpgw.Main(args))
+	case "dashboards-mcp":
+		os.Exit(dashmcp.Main(args))
 	case "version":
 		fmt.Println("cloudbuddy", config.Version)
 	default:
@@ -180,6 +184,8 @@ func serve(args []string) int {
 			log.Println("shim socket:", err)
 		}
 	}
+	// Dashboards refresh on their timers while CloudBuddy runs (D-067).
+	eng.StartDashboards(ctx, 10*time.Second)
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := hs.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {

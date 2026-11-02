@@ -57,6 +57,12 @@ type Engine struct {
 	pinOnce sync.Once
 	pinned  map[string]string
 
+	// dashboards (D-067, D-068)
+	dashMu      sync.Mutex
+	dashRunning map[string]chan struct{} // dashboard id -> closed when its refresh ends
+	dashByShim  map[string]*dashExec     // shim token -> the dashboard command it came from
+	dashSaveKey map[string]string        // run id -> the latest save_dashboard tool call the hook saw
+
 	// ClaudeCanary is true once Phase 2 confirmed SessionStart fires in -p
 	// mode; only then is a missing canary treated as a bypass.
 	ClaudeCanary bool
@@ -88,7 +94,8 @@ func New(cfg config.Config, st *store.Store, b *bus.Bus, adapters *recognize.Ada
 		codex:  &agent.Codex{DataDir: cfg.DataDir, Home: cfg.Home},
 		runs:   map[string]*Run{}, active: map[string]*Run{}, waiters: map[string]chan bool{},
 		hints: map[string]recognize.Hints{}, execByToken: map[string]*execState{}, execByShim: map[string]*execState{},
-		execByStep: map[string]*execState{}, stoppedBy: map[string]string{}}
+		execByStep: map[string]*execState{}, stoppedBy: map[string]string{},
+		dashRunning: map[string]chan struct{}{}, dashByShim: map[string]*dashExec{}, dashSaveKey: map[string]string{}}
 }
 
 // SetClaude pins the claude program CloudBuddy starts.
@@ -280,6 +287,7 @@ func (e *Engine) drive(ctx context.Context, r *Run, c store.Conversation, prompt
 		Env: map[string]string{"CB_GATE_URL": e.cfg.GateURL(), "CB_GATE_TOKEN": e.cfg.GateToken, "CB_RUN_ID": r.ID}}
 	if c.Agent == "claude" {
 		opts.MCPServers = e.claudeMCPServers(r)
+		opts.MCPServers[DashServer] = e.dashMCPServer(r) // dashboards (D-068)
 	} else {
 		opts.MCP = e.gatewaySpecs(r, runDir)
 	}

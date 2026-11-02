@@ -5,8 +5,9 @@ package bus
 import "sync"
 
 type Event struct {
-	Type           string `json:"type"` // conversation | conversations | connections | projects | settings
+	Type           string `json:"type"` // conversation | conversations | connections | projects | settings | dashboards | dashboard
 	ConversationID string `json:"conversationId,omitempty"`
+	DashboardID    string `json:"dashboardId,omitempty"`
 }
 
 type Bus struct {
@@ -37,6 +38,11 @@ func (b *Bus) Publish(e Event) {
 		default: // a slow browser just misses an invalidation; it refetches on the next one
 		}
 	}
+}
+
+// Dashboard announces that one dashboard (and the list) changed.
+func (b *Bus) Dashboard(id string) {
+	b.Publish(Event{Type: "dashboard", DashboardID: id})
 }
 
 // Conversation announces that one conversation (and the list) changed.

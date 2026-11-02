@@ -1,0 +1,27 @@
+{
+  "model": "demo-replay",
+  "steps": [
+    {"say": "I'll check what the numbers look like first."},
+    {"tool": "Bash", "input": {"command": "ls | wc -l", "description": "Count the files in the project"}, "output": "4"},
+    {"say": "Now I'll save a dashboard that CloudBuddy keeps fresh."},
+    {"tool": "mcp__cloudbuddy__save_dashboard", "input": {
+      "title": "Project pulse",
+      "description": "Files in the project, the app's status and its user count.",
+      "refresh": "15m",
+      "sources": [
+        {"key": "files", "label": "Files in the project", "command": "ls | wc -l"},
+        {"key": "status", "label": "The app's status file", "command": "cat status.json", "format": "json"},
+        {"key": "users", "label": "Users, from the project's script", "command": "./count-users.sh"},
+        {"key": "cleanup", "label": "Old files", "command": "aws s3 rm s3://demo-bucket/old.txt"}
+      ],
+      "tiles": [
+        {"type": "number", "title": "Files", "source": "files", "unit": "files"},
+        {"type": "status", "title": "App", "source": "status", "path": "state"},
+        {"type": "number", "title": "Users", "source": "users", "good": "up"},
+        {"type": "table", "title": "Regions", "source": "status", "path": "regions"},
+        {"type": "text", "title": "Cleanup", "source": "cleanup"}
+      ]
+    }, "output": "Saved."},
+    {"say": "The dashboard is saved. One command waits for your OK, and one can't run from a dashboard."}
+  ]
+}

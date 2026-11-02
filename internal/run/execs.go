@@ -187,6 +187,9 @@ func (e *Engine) SetDirenv(bin string) { e.direnvBin = bin }
 // ShimStart decides one CLI call a script made. It shows as its own card
 // under the command that ran the script, and asks first like any call.
 func (e *Engine) ShimStart(ctx context.Context, token, prog string, args []string, cwd, copy string) (bool, string, string) {
+	if ok, reason, handled := e.dashShimStart(ctx, token, prog, args, cwd); handled {
+		return ok, reason, ""
+	}
 	e.execMu.Lock()
 	x := e.execByShim[token]
 	e.execMu.Unlock()
