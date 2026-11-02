@@ -95,6 +95,10 @@ func (e *Engine) ClaudePreTool(ctx context.Context, runID string, in HookInput) 
 			}
 		}
 	}
+	// CloudBuddy's own tools: saving a dashboard (D-068).
+	if call.Via == "mcp" && call.Server == DashServer {
+		return e.dashboardHook(ctx, r, in, call)
+	}
 	// MCP calls through CloudBuddy's gateway are decided by the gateway.
 	if call.Via == "mcp" && r.gateways[call.Server] {
 		return HookAnswer{Decision: "allow", Reason: "CloudBuddy's MCP gateway checks this call."}

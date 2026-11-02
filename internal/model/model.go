@@ -113,6 +113,16 @@ type Step struct {
 	MaskedNote      string      `json:"maskedNote,omitempty"`
 	Uses            []Use       `json:"uses"`
 	Approval        *Approval   `json:"approval,omitempty"`
+	// App is something the step made that has its own page, such as a
+	// dashboard (D-067). The canvas card gets an Open button.
+	App *StepApp `json:"app,omitempty"`
+}
+
+// StepApp points from a step to what it made.
+type StepApp struct {
+	Kind  string `json:"kind"` // dashboard
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }
 
 type ChatItem struct {

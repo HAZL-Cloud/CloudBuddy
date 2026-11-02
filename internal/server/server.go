@@ -75,6 +75,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/connections", s.handleConnections)
 	mux.HandleFunc("POST /api/connections/scan", s.handleScan)
 	mux.HandleFunc("PUT /api/connections/{id}/rule", s.handleRule)
+	mux.HandleFunc("GET /api/dashboards", s.handleDashboards)
+	mux.HandleFunc("GET /api/dashboards/{id}", s.handleDashboard)
+	mux.HandleFunc("PUT /api/dashboards/{id}/schedule", s.handleDashboardSchedule)
+	mux.HandleFunc("POST /api/dashboards/{id}/refresh", s.handleDashboardRefresh)
+	mux.HandleFunc("POST /api/dashboards/{id}/sources/{key}/decision", s.handleDashboardDecision)
+	mux.HandleFunc("DELETE /api/dashboards/{id}", s.handleDeleteDashboard)
 	mux.HandleFunc("GET /stream", s.handleStream)
 	// gate (hook, exec wrapper, MCP gateway): separate secret, can't approve
 	mux.HandleFunc("POST /gate/claude/pretool", s.gate(s.handlePreTool))
@@ -84,6 +90,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /gate/mcp/tools", s.gate(s.handleMCPTools))
 	mux.HandleFunc("POST /gate/mcp/call", s.gate(s.handleMCPCall))
 	mux.HandleFunc("POST /gate/mcp/result", s.gate(s.handleMCPResult))
+	mux.HandleFunc("POST /gate/dashboards/tool", s.gate(s.handleDashboardTool))
 	mux.HandleFunc("GET /", s.handleStatic)
 	return s.guard(mux)
 }

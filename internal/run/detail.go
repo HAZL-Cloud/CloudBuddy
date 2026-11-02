@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -99,6 +100,15 @@ func (e *Engine) fakeGate(ctx context.Context, runID, toolKey, toolName string, 
 	in.Cwd = r.Workdir
 	call := CallFromClaude(in)
 	var o outcome
+	if call.Via == "mcp" && call.Server == DashServer {
+		// the demo agent's dashboard calls: the hook, then the tool itself
+		if ans := e.dashboardHook(ctx, r, in, call); ans.Decision != "allow" {
+			return false, ans.Reason
+		}
+		args, _ := json.Marshal(input)
+		res := e.DashboardTool(ctx, runID, toolKey, call.Tool, args)
+		return !res.IsError, res.Text
+	}
 	if call.Via == "mcp" {
 		ok, reason, _ := e.MCPCall(ctx, runID, call.Server, call.Tool, call.Args, map[string]any{"claudecode/toolUseId": toolKey})
 		return ok, reason
