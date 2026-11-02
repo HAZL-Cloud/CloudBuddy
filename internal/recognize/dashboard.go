@@ -48,7 +48,7 @@ func SQLRead(command string) SQLCheck {
 			return no("the query has " + strings.ToUpper(w) + " in it")
 		}
 	}
-	if unquotedTricks(command) {
+	if !PlainShell(command) {
 		return no("it uses shell features CloudBuddy can't read")
 	}
 	if writesFiles(command) {
@@ -61,11 +61,8 @@ func SQLRead(command string) SQLCheck {
 		return no("it names a copy of the program by its path")
 	}
 	for _, s := range segs[1:] {
-		if s.Opaque || s.Nested || s.Background || len(s.Env) > 0 || !dashTextTools[s.Prog] || strings.Contains(s.ProgPath, "/") {
-			return no("it pipes the result into " + progName(s))
-		}
-		if s.Prog == "printf" && (hasFlag(s.Args, "-v") || anyPrefix(s.Args, "-v")) {
-			return no("it sets a shell variable")
+		if !dashTextTools[s.Prog] || !textToolSafe(s) {
+			return no("it pipes the result into " + progName(s) + " in a way CloudBuddy can't be sure only reads")
 		}
 	}
 	switch first.Prog {
@@ -111,54 +108,144 @@ func sqlWriteWord(q string) string {
 	return ""
 }
 
-// sqlChanges are the words of statements that change data or the schema.
+// sqlChanges are the words of statements that change data or the schema,
+// or run stored code: a query with one of them can never be a dashboard
+// command. (SELECT … INTO makes a table; COPY can run a program.)
 var sqlChanges = map[string]bool{"insert": true, "update": true, "delete": true, "merge": true, "upsert": true,
-	"truncate": true, "drop": true, "alter": true, "create": true, "grant": true, "revoke": true}
+	"truncate": true, "drop": true, "alter": true, "create": true, "grant": true, "revoke": true, "into": true,
+	"copy": true, "call": true, "do": true, "execute": true, "vacuum": true, "reindex": true, "cluster": true,
+	"refresh": true, "attach": true, "detach": true}
 
-// unquotedTricks is shellTricks that knows about quotes: inside single
-// quotes nothing is special, and inside double quotes only substitutions are.
-func unquotedTricks(cmd string) bool {
+// PlainShell reports whether a command uses only shell syntax CloudBuddy
+// reads fully: words, quotes, plain $NAME variables, pipes, ; && ||, and
+// redirections. Anything else can run code the words don't show (Codex
+// review of D-067): zsh glob qualifiers like *(e:'rm x':), subshells and
+// grouping, command, process and arithmetic substitution ($(…), `…`,
+// <(…), =(…), $[…]), ${…} expansions, here-documents, and background &.
+// Every dashboard read must pass it.
+func PlainShell(cmd string) bool {
 	rs := []rune(cmd)
+	at := func(i int) rune {
+		if i >= 0 && i < len(rs) {
+			return rs[i]
+		}
+		return 0
+	}
+	dollarOK := func(i int) bool { // rs[i] == '$': only $NAME
+		n := at(i + 1)
+		return n == '_' || (n >= 'A' && n <= 'Z') || (n >= 'a' && n <= 'z')
+	}
 	for i := 0; i < len(rs); i++ {
 		c := rs[i]
-		next := rune(0)
-		if i+1 < len(rs) {
-			next = rs[i+1]
-		}
-		switch {
-		case c == '\\':
+		switch c {
+		case '\\':
 			i++
-		case c == '\'':
+		case '\'':
 			for i++; i < len(rs) && rs[i] != '\''; i++ {
 			}
-		case c == '"':
+		case '"':
 			for i++; i < len(rs) && rs[i] != '"'; i++ {
-				if rs[i] == '\\' {
+				switch rs[i] {
+				case '\\':
 					i++
-					continue
-				}
-				if rs[i] == '`' || (rs[i] == '$' && i+1 < len(rs) && (rs[i+1] == '(' || rs[i+1] == '{')) {
-					return true
+				case '`':
+					return false
+				case '$':
+					if !dollarOK(i) {
+						return false
+					}
 				}
 			}
-		case c == '`', c == '$' && (next == '(' || next == '{'), (c == '<' || c == '>') && next == '(', c == '<' && next == '<', c == '(' && next == ')':
-			return true
+		case '(', ')', '`', '{', '}':
+			return false
+		case '$':
+			if !dollarOK(i) {
+				return false
+			}
+		case '<':
+			if at(i+1) == '<' || at(i+1) == '(' {
+				return false
+			}
+		case '>':
+			if at(i+1) == '(' {
+				return false
+			}
+		case '&':
+			// && and the stream copies 2>&1, >&2 are fine; a lone & runs in the background
+			if at(i+1) == '&' {
+				i++
+			} else if at(i-1) != '>' && at(i-1) != '<' {
+				return false
+			}
 		}
 	}
-	return false
+	return true
 }
 
 // dashLocalTools only read files or print text: a command made of them alone
-// is a read (when it reads nothing outside the project).
+// is a read (when it reads nothing outside the project). textToolSafe checks
+// the options that would make them write or show secrets.
 var dashLocalTools = map[string]bool{"echo": true, "printf": true, "jq": true, "yq": true, "grep": true, "egrep": true,
 	"fgrep": true, "head": true, "tail": true, "wc": true, "uniq": true, "cut": true, "tr": true, "column": true, "cat": true,
 	"base64": true, "true": true, "ls": true, "pwd": true, "date": true, "stat": true, "du": true, "diff": true,
 	"basename": true, "dirname": true, "realpath": true, "test": true, "[": true, "cd": true}
 
+// textToolSafe reports whether one text tool, with these arguments, only
+// reads and prints (Codex review of D-067: uniq in out, yq -i, base64 -o).
+func textToolSafe(s segment) bool {
+	if s.Opaque || s.Nested || s.Background || len(s.Env) > 0 || strings.Contains(s.ProgPath, "/") {
+		return false
+	}
+	switch s.Prog {
+	case "printf":
+		return !hasFlag(s.Args, "-v") && !anyPrefix(s.Args, "-v")
+	case "tail":
+		for _, a := range s.Args {
+			if a == "-f" || a == "-F" || strings.HasPrefix(a, "--follow") || (strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a, "fF")) {
+				return false
+			}
+		}
+	case "uniq":
+		// uniq writes its second file name ("-" is a name too: standard input)
+		names := 0
+		for _, a := range s.Args {
+			if a == "-" || !strings.HasPrefix(a, "-") {
+				names++
+			}
+		}
+		if names > 1 {
+			return false
+		}
+	case "base64":
+		for _, a := range s.Args {
+			if a == "-o" || strings.HasPrefix(a, "--output") || (strings.HasPrefix(a, "-o") && len(a) > 2) {
+				return false
+			}
+		}
+	case "date":
+		// date can set the clock: only formats and time zones
+		for _, a := range s.Args {
+			if !strings.HasPrefix(a, "+") && a != "-u" && a != "-R" && a != "--utc" && a != "--rfc-2822" && !strings.HasPrefix(a, "-I") && !strings.HasPrefix(a, "--iso-8601") {
+				return false
+			}
+		}
+	case "jq", "yq":
+		for _, a := range s.Args {
+			// in-place edits, and every environment variable (env, $ENV), secrets included
+			if a == "-i" || strings.HasPrefix(a, "--inplace") || strings.HasPrefix(a, "--in-place") ||
+				(strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "i") && s.Prog == "yq") ||
+				strings.Contains(a, "env") || strings.Contains(a, "ENV") {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // TextOnly reports whether a command only reads files and prints text, with
 // tools like cat, grep, wc and jq.
 func TextOnly(command string) bool {
-	if unquotedTricks(command) || writesFiles(command) {
+	if !PlainShell(command) || writesFiles(command) {
 		return false
 	}
 	segs := expand(splitShell(command))
@@ -166,13 +253,7 @@ func TextOnly(command string) bool {
 		return false
 	}
 	for _, s := range segs {
-		if s.Opaque || s.Nested || s.Background || len(s.Env) > 0 || !dashLocalTools[s.Prog] || strings.Contains(s.ProgPath, "/") {
-			return false
-		}
-		if s.Prog == "printf" && (hasFlag(s.Args, "-v") || anyPrefix(s.Args, "-v")) {
-			return false
-		}
-		if s.Prog == "tail" && (hasFlag(s.Args, "-f", "-F", "--follow") || anyPrefix(s.Args, "--follow")) {
+		if !dashLocalTools[s.Prog] || !textToolSafe(s) {
 			return false
 		}
 	}
@@ -254,8 +335,9 @@ func psqlRead(args []string) string {
 	}
 	for _, o := range others {
 		lo := strings.ToLower(o)
-		// a connection string can turn the read-only session back off, or name a pager program
-		if strings.Contains(lo, "options") || strings.Contains(lo, "transaction") || strings.Contains(lo, "read_only") || strings.Contains(lo, "pager") {
+		// a connection string or a service file can turn the read-only session back off, or name a pager program
+		if strings.Contains(lo, "options") || strings.Contains(lo, "transaction") || strings.Contains(lo, "read_only") ||
+			strings.Contains(lo, "pager") || strings.Contains(lo, "service") {
 			return "a psql argument changes session settings"
 		}
 	}
@@ -268,7 +350,7 @@ var sqliteOpts = map[string]bool{"readonly": false, "json": false, "csv": false,
 	"quote": false, "batch": false, "bail": false, "safe": false, "separator": true, "newline": true, "nullvalue": true}
 
 func sqliteRead(args []string) string {
-	readonly := false
+	readonly, safe := false, false
 	var pos []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -281,6 +363,9 @@ func sqliteRead(args []string) string {
 			if name == "readonly" {
 				readonly = true
 			}
+			if name == "safe" {
+				safe = true
+			}
 			if takes {
 				i++
 			}
@@ -288,8 +373,8 @@ func sqliteRead(args []string) string {
 		}
 		pos = append(pos, a)
 	}
-	if !readonly {
-		return "sqlite3 must open the file with -readonly"
+	if !readonly || !safe {
+		return "sqlite3 must run with -readonly -safe (safe mode turns off writefile(), .shell and the other ways out)"
 	}
 	if len(pos) != 2 {
 		return "sqlite3 needs the database file and one query"
@@ -372,18 +457,34 @@ func sqlWords(s string) []string {
 	for i := 0; i < len(rs); i++ {
 		c := rs[i]
 		switch {
-		case c == '\'' || c == '"':
+		case c == '\'':
+			// a string literal: its words aren't SQL
 			flush()
-			q := c
 			for i++; i < len(rs); i++ {
-				if rs[i] == q {
-					if i+1 < len(rs) && rs[i+1] == q { // '' or "" inside
+				if rs[i] == '\'' {
+					if i+1 < len(rs) && rs[i+1] == '\'' { // '' inside
 						i++
 						continue
 					}
 					break
 				}
 			}
+		case c == '"':
+			// a quoted name ("writefile", "pg_terminate_backend") is still a
+			// name: keep its text as one word (Codex review of D-067)
+			flush()
+			for i++; i < len(rs); i++ {
+				if rs[i] == '"' {
+					if i+1 < len(rs) && rs[i+1] == '"' {
+						cur.WriteRune('"')
+						i++
+						continue
+					}
+					break
+				}
+				cur.WriteRune(rs[i])
+			}
+			flush()
 		case c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'):
 			cur.WriteRune(c)
 		default:
@@ -445,6 +546,19 @@ func Programs(command string) []string {
 		if s.ProgPath != "" {
 			out = append(out, s.ProgPath)
 		}
+	}
+	return out
+}
+
+// Argv lists each simple command's program and arguments as the shell will
+// see them, quotes removed: what a dashboard approval hashes.
+func Argv(command string) [][]string {
+	var out [][]string
+	for _, s := range expand(splitShell(command)) {
+		if s.ProgPath == "" {
+			continue
+		}
+		out = append(out, append([]string{s.ProgPath}, s.Args...))
 	}
 	return out
 }

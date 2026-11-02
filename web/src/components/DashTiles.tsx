@@ -472,12 +472,18 @@ export function TileView({ tile, value, span, onReview }: TileViewProps) {
         )}
       </header>
       <div className="tile-body">{body}</div>
-      {(tile.note || (ok && v.stale) || (ok && v.updatedAt)) && (
+      {(tile.note || (ok && v.message) || (ok && v.updatedAt)) && (
         <footer className="tile-foot">
           {ok && v.stale && v.message && (
             <span className="tile-warn" title={v.message}>
               <Icon name="question" small />
               Last refresh failed
+            </span>
+          )}
+          {ok && !v.stale && v.message && (
+            <span className="tile-warn">
+              <Icon name="question" small />
+              {v.message}
             </span>
           )}
           {tile.note && <span>{tile.note}</span>}

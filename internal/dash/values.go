@@ -253,23 +253,33 @@ func limitBars(b []Bar, limit, def int) []Bar {
 	return b
 }
 
-func lineSeries(t Tile, runs map[string]Runs, h History, tv TileValue) TileValue {
+func lineSeries(t Tile, runs map[string]Runs, h History, in TileValue) (tv TileValue) {
+	tv = in
 	tv.State = "ok"
+	points, firstState := 0, ""
+	defer func() {
+		// nothing to draw and a command that can't run: say why, not "fills in"
+		if points == 0 && firstState != "" {
+			tv.State = firstState
+		}
+	}()
 	for _, se := range t.Series {
 		label := se.Label
 		if label == "" {
 			label = se.Source
 		}
-		tv.Series = append(tv.Series, SeriesValue{Label: label, Points: h.Points(SeriesKey(se.Source, se.Path))})
+		pts := h.Points(SeriesKey(se.Source, se.Path))
+		points += len(pts)
+		tv.Series = append(tv.Series, SeriesValue{Label: label, Points: pts})
 		r := runs[se.Source]
 		if r.Latest != nil && r.Latest.State != RunOK && tv.Message == "" {
 			switch r.Latest.State {
 			case RunWaiting:
-				tv.Message = "A command for this chart is waiting for your OK."
+				tv.Message, firstState = "A command for this chart is waiting for your OK.", "waiting"
 			case RunBlocked:
-				tv.Message = r.Latest.Note
+				tv.Message, firstState = r.Latest.Note, "blocked"
 			case RunDeclined:
-				tv.Message = "You didn't allow a command for this chart."
+				tv.Message, firstState = "You didn't allow a command for this chart.", "declined"
 			default:
 				tv.Message, tv.Stale = failMessage(r.Latest), true
 			}
