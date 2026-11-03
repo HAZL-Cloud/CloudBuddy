@@ -100,7 +100,9 @@ func (e *Engine) dashBusy(id string) bool {
 // RefreshDashboard runs every command of a dashboard once and stores what
 // came back, even when the dashboard is paused (the user or the agent asked
 // for it). If a refresh is already going, it waits for that one.
-func (e *Engine) RefreshDashboard(ctx context.Context, id string) error { return e.refresh(ctx, id, false) }
+func (e *Engine) RefreshDashboard(ctx context.Context, id string) error {
+	return e.refresh(ctx, id, false)
+}
 
 // refresh is RefreshDashboard; a scheduled one doesn't run a paused
 // dashboard. Pausing writes the database first and then stops what is
