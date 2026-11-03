@@ -170,8 +170,8 @@ export function useRefreshDashboard() {
 // Never optimistic, like approvals: the page shows what the server says after it answers.
 export function useDecideDashboardSource() {
   return useDashboardMutation(
-    ({ id, key, decision, command, cwd }: { id: string; key: string; decision: 'allow' | 'deny'; command: string; cwd: string }) =>
-      api.decideDashboardSource(id, key, decision, { command, cwd }),
+    ({ id, key, decision, revision }: { id: string; key: string; decision: 'allow' | 'deny'; revision: string }) =>
+      api.decideDashboardSource(id, key, decision, revision),
   )
 }
 

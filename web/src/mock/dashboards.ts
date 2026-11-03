@@ -83,11 +83,12 @@ function usersDashboard(): DashboardDetail {
     tiles,
     values,
     sources: [
-      { key: 'users', label: 'All users', command: `psql "$DATABASE_URL" -tAc 'select count(*) from users'`, cwd: '/Users/you/code/shop-web', format: 'auto', verdict: 'read', lastRun: ok('1204\n') },
+      { key: 'users', label: 'All users', command: `psql "$DATABASE_URL" -XtAc 'select count(*) from users'`, cwd: '/Users/you/code/shop-web', format: 'auto', verdict: 'read', lastRun: ok('1204\n') },
       { key: 'stripe', label: 'Active subscriptions', command: 'stripe subscriptions list --status active --limit 100', cwd: '/Users/you/code/shop-web', format: 'auto', verdict: 'read', lastRun: ok('{"data":[…87 items]}', 910) },
       {
         key: 'mrr',
         label: 'Monthly revenue',
+        revision: 'rev-mrr-1',
         command: 'node scripts/mrr.js',
         cwd: '/Users/you/code/shop-web',
         format: 'auto',
@@ -99,7 +100,7 @@ function usersDashboard(): DashboardDetail {
       {
         key: 'daily',
         label: 'Signups per day',
-        command: `psql "$DATABASE_URL" --csv -c 'select date(created_at) as day, count(*) as signups from users group by 1 order by 1 desc limit 5'`,
+        command: `psql "$DATABASE_URL" -X --csv -c 'select date(created_at) as day, count(*) as signups from users group by 1 order by 1 desc limit 5'`,
         cwd: '/Users/you/code/shop-web',
         format: 'csv',
         verdict: 'read',
@@ -108,7 +109,7 @@ function usersDashboard(): DashboardDetail {
       {
         key: 'plans',
         label: 'Users by plan',
-        command: `psql "$DATABASE_URL" -tAc "select json_agg(t) from (select plan, count(*) as users from users group by 1) t"`,
+        command: `psql "$DATABASE_URL" -XtAc "select json_agg(t) from (select plan, count(*) as users from users group by 1) t"`,
         cwd: '/Users/you/code/shop-web',
         format: 'auto',
         verdict: 'read',
@@ -219,7 +220,7 @@ export function dashboardRoute(m: DashMock, method: string, fullPath: string, b:
     const src = d.sources.find((s) => s.key === key)
     if (!src) throw new ApiError(404, 'not_found')
     const allow = b.decision === 'allow'
-    if (b.command !== src.command || b.cwd !== src.cwd) throw new ApiError(409, 'changed')
+    if (b.revision !== (src.revision ?? '')) throw new ApiError(409, 'changed')
     src.approval = { allowed: allow, decidedAt: new Date().toISOString() }
     if (src.verdict === 'needs_ok') {
       src.lastRun = allow

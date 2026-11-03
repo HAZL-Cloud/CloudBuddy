@@ -272,15 +272,16 @@ func lineSeries(t Tile, runs map[string]Runs, h History, in TileValue) (tv TileV
 		points += len(pts)
 		tv.Series = append(tv.Series, SeriesValue{Label: label, Points: pts})
 		r := runs[se.Source]
-		if r.Latest != nil && r.Latest.State != RunOK && tv.Message == "" {
-			switch r.Latest.State {
-			case RunWaiting:
-				tv.Message, firstState = "A command for this chart is waiting for your OK.", "waiting"
-			case RunBlocked:
-				tv.Message, firstState = r.Latest.Note, "blocked"
-			case RunDeclined:
-				tv.Message, firstState = "You didn't allow a command for this chart.", "declined"
-			default:
+		if r.Latest != nil && r.Latest.State != RunOK {
+			switch {
+			case firstState != "":
+			case r.Latest.State == RunWaiting:
+				tv.Message, tv.Stale, firstState = "A command for this chart is waiting for your OK.", false, "waiting"
+			case r.Latest.State == RunBlocked:
+				tv.Message, tv.Stale, firstState = r.Latest.Note, false, "blocked"
+			case r.Latest.State == RunDeclined:
+				tv.Message, tv.Stale, firstState = "You didn't allow a command for this chart.", false, "declined"
+			case tv.Message == "":
 				tv.Message, tv.Stale = failMessage(r.Latest), true
 			}
 		}

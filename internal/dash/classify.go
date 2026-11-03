@@ -38,10 +38,20 @@ type Input struct {
 	LocalProgram func(command string) string
 }
 
-// Classify decides whether a dashboard command may run on a timer. It is
-// stricter than the chat gate: there is nobody to ask, so only what
-// CloudBuddy recognizes as a read runs alone, and anything the chat gate
-// would ask about can't run from a dashboard at all.
+// Classify decides whether a dashboard command may run on a timer. There is
+// nobody to ask, so:
+//
+//  1. A command must be inside the dashboard grammar CloudBuddy parses itself
+//     (recognize.ParseDashCommand); anything else can never run, because
+//     CloudBuddy can't tell what it runs or hold it to the user's OK. Steps
+//     that need more go in a script file.
+//  2. Anything the chat gate would ask about (deletes, Can't undo, Moves
+//     money, Reaches people, sends, changes in live mode), SQL that changes
+//     data, CloudBuddy's own files, background commands and connections
+//     turned Off can never run.
+//  3. A command made only of recognized reads runs by itself
+//     (recognize.StrictRead).
+//  4. Everything else runs once the user allows it.
 func Classify(in Input) Class {
 	d := recognize.Recognize(recognize.Call{Agent: "claude", Via: "shell", Command: in.Command, WantsNetwork: true, Cwd: in.Cwd},
 		in.Env, in.Adapters)
@@ -64,39 +74,19 @@ func Classify(in Input) Class {
 	if len(d.Protected) > 0 {
 		return never("It touches CloudBuddy's own setup (" + strings.Join(d.Protected, ", ") + ").")
 	}
+	segs, why := recognize.ParseDashCommand(in.Command)
+	if why != "" {
+		return never("CloudBuddy can't read this command fully (" + why + "), so it can't tell what it runs or hold it to your OK. Put the steps in a script file in the project and run that.")
+	}
 	if d.Background {
 		return never("Dashboards can't start commands that keep running in the background.")
 	}
 	if rule == model.RuleOff && d.Kind == "cloud" {
 		return never(d.Provider + " is turned off in Connections.")
 	}
-
-	// Only shell CloudBuddy reads fully can be a read: zsh can hide code in
-	// glob qualifiers, substitutions and the like (Codex review of D-067).
-	plain := recognize.PlainShell(in.Command)
-
-	local := ""
-	if in.LocalProgram != nil {
-		local = in.LocalProgram(in.Command)
+	if w := recognize.SQLWrite(in.Command); w != "" {
+		return never("Dashboards only fetch data, and this query changes data (" + strings.ToUpper(w) + ").")
 	}
-	// A database query: one read runs alone; a query that changes data never.
-	sql := recognize.SQLRead(in.Command)
-	if sql.Write != "" {
-		return never("Dashboards only fetch data, and this query changes data (" + strings.ToUpper(sql.Write) + ").")
-	}
-	if sql.Engine == "psql" {
-		// a Postgres service file can turn the read-only session back off
-		for _, k := range []string{"PGSERVICE", "PGSERVICEFILE", "PGSYSCONFDIR"} {
-			if in.Env.AgentEnv[k] != "" {
-				return needs("It connects through a Postgres service file (" + k + "), which can turn CloudBuddy's read-only session off.")
-			}
-		}
-	}
-	if sql.Engine != "" && local == "" && plain {
-		c.Verdict, c.SQL, c.Provider = Read, sql.Engine, "Database"
-		return c
-	}
-
 	if d.Action == model.ActionDelete {
 		if d.HiddenDelete != "" {
 			return never("Dashboards only fetch data, and this looks like a delete (“" + d.HiddenDelete + "”).")
@@ -118,39 +108,37 @@ func Classify(in Input) Class {
 	if d.Action == model.ActionSend {
 		return never("Dashboards only fetch data, and this sends something.")
 	}
-	isRead := d.Action == model.ActionRead && d.ReviewedRead
 	if has(model.TagLive) && d.Action != model.ActionRead {
 		return never("Dashboards only fetch data, and this changes something in live mode.")
 	}
-	if rule == model.RuleReadOnly && d.Kind == "cloud" && !isRead {
+
+	engine, notRead := recognize.StrictRead(segs, in.Env, in.Adapters)
+	if rule == model.RuleReadOnly && d.Kind == "cloud" && notRead != "" {
 		return never(d.Provider + " is read-only in Connections, and CloudBuddy can't tell this only reads.")
 	}
-
+	local := ""
+	if in.LocalProgram != nil {
+		local = in.LocalProgram(in.Command)
+	}
 	switch {
-	case !plain:
-		return needs("It uses shell features CloudBuddy can't read (like a zsh glob qualifier or a substitution), so it can't be sure this only reads.")
 	case local != "":
 		return needs("It runs " + local + " from the project, which can change at any time.")
-	case recognize.DashboardWrites(in.Command):
-		return needs("It writes to a file.")
 	case len(d.ExternalFiles) > 0:
 		return needs("It reads files outside the project: " + strings.Join(d.ExternalFiles, ", ") + ".")
-	case d.Opaque:
-		return needs("It uses shell features CloudBuddy can't read, so it can't be sure this only reads.")
-	case recognize.TextOnly(in.Command):
-		c.Verdict, c.Provider = Read, "Local"
-		return c
-	case sql.Engine == "" && sql.Why != "" && sql.Why != "it isn't psql or sqlite3":
-		return needs("CloudBuddy can't be sure this database query only reads: " + sql.Why + ".")
-	case d.Network == "B":
-		return needs("It runs a program or script, and CloudBuddy can't see what it does inside.")
-	case d.Action == model.ActionCreate || d.Action == model.ActionChange:
-		return needs("It looks like it changes something (" + string(d.Action) + "), not only reads.")
-	case d.Action == model.ActionRead && !d.ReviewedRead && d.API != "" && strings.Contains(d.API, " "):
-		return needs("CloudBuddy can't be sure this web request only reads: some services change things on a GET.")
-	case !isRead:
-		return needs("CloudBuddy can't tell that this only reads.")
+	case notRead != "":
+		return needs("CloudBuddy can't tell that this only reads: " + notRead + ".")
 	}
-	c.Verdict = Read
+	if engine == "psql" {
+		// a Postgres service file can turn the read-only session back off
+		for _, k := range []string{"PGSERVICE", "PGSERVICEFILE", "PGSYSCONFDIR"} {
+			if in.Env.AgentEnv[k] != "" {
+				return needs("It connects through a Postgres service file (" + k + "), which can turn CloudBuddy's read-only session off.")
+			}
+		}
+	}
+	c.Verdict, c.SQL = Read, engine
+	if engine != "" {
+		c.Provider = "Database"
+	}
 	return c
 }

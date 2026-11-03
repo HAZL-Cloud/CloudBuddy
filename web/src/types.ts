@@ -256,6 +256,8 @@ export interface DashboardSource {
   reason?: string
   approval?: { allowed: boolean; decidedAt: string; changed?: boolean }
   lastRun?: SourceRun
+  /** Names exactly the command, folder and files the page shows; an answer sends it back. */
+  revision?: string
 }
 
 export interface DashboardSummary {

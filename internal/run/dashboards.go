@@ -86,7 +86,7 @@ func (e *Engine) runDue(ctx context.Context) {
 		if e.dashBusy(id) {
 			continue
 		}
-		go func(id string) { _ = e.RefreshDashboard(ctx, id) }(id)
+		go func(id string) { _ = e.refresh(ctx, id, true) }(id)
 	}
 }
 
@@ -98,8 +98,15 @@ func (e *Engine) dashBusy(id string) bool {
 }
 
 // RefreshDashboard runs every command of a dashboard once and stores what
-// came back. If a refresh is already going, it waits for that one.
-func (e *Engine) RefreshDashboard(ctx context.Context, id string) error {
+// came back, even when the dashboard is paused (the user or the agent asked
+// for it). If a refresh is already going, it waits for that one.
+func (e *Engine) RefreshDashboard(ctx context.Context, id string) error { return e.refresh(ctx, id, false) }
+
+// refresh is RefreshDashboard; a scheduled one doesn't run a paused
+// dashboard. Pausing writes the database first and then stops what is
+// registered, and this reads the dashboard only after registering, so no
+// scheduled refresh slips past a pause (Codex review of D-067).
+func (e *Engine) refresh(ctx context.Context, id string, scheduled bool) error {
 	e.dashMu.Lock()
 	if ch, busy := e.dashRunning[id]; busy {
 		e.dashMu.Unlock()
@@ -127,6 +134,9 @@ func (e *Engine) RefreshDashboard(ctx context.Context, id string) error {
 	d, err := e.st.GetDashboard(ctx, id)
 	if err != nil {
 		return err
+	}
+	if scheduled && d.Paused {
+		return nil
 	}
 	var spec dash.Spec
 	if err := json.Unmarshal(d.Spec, &spec); err != nil {
@@ -278,6 +288,7 @@ func (e *Engine) dashSource(ctx context.Context, d store.Dashboard, src dash.Sou
 		run.State, run.Note = dash.RunBlocked, class.Reason
 		return run
 	case dash.NeedsOK:
+		run.ExecDigest = dashDigest(src.Command, cwd, env, dashRun(d, env).projectFolders())
 		if st, note := e.dashApproved(ctx, d, src, cwd, env, class); st != "" {
 			run.State, run.Note = st, note
 			return run
@@ -326,8 +337,9 @@ func (e *Engine) dashApproved(ctx context.Context, d store.Dashboard, src dash.S
 }
 
 // dashDigest hashes the files a command runs or reads, as the shell will
-// see them (quotes removed, $NAME expanded, bare program names found on
-// PATH when they live in the project), plus the project's manifests. An
+// see them (parsed by the dashboard grammar: quotes removed, $NAME expanded
+// outside single quotes, no globs; bare program names found on PATH when
+// they live in the project), plus the project's manifests. An
 // approval is tied to it (Codex review of D-067: quoted names and PATH
 // programs were missed).
 func dashDigest(command, cwd string, env map[string]string, folders []string) string {
@@ -354,16 +366,24 @@ func dashDigest(command, cwd string, env map[string]string, folders []string) st
 		}
 		return false
 	}
-	expandVars := func(s string) string { return os.Expand(s, func(k string) string { return env[k] }) }
-	for _, argv := range recognize.Argv(command) {
-		prog := expandVars(argv[0])
+	segs, why := recognize.ParseDashCommand(command)
+	if why != "" {
+		return "" // outside the grammar: it never runs, so it is never approved
+	}
+	for _, seg := range segs {
+		for _, e := range seg.Env { // FILE=x.js node run.js
+			if _, v, ok := strings.Cut(e.Expand(env), "="); ok {
+				add(v)
+			}
+		}
+		prog := seg.Words[0].Expand(env)
 		if strings.Contains(prog, "/") {
 			add(prog)
 		} else if p := lookIn(env["PATH"], prog); p != "" && inProject(p) {
 			add(p)
 		}
-		for _, a := range argv[1:] {
-			a = expandVars(a)
+		for _, w := range seg.Words[1:] {
+			a := w.Expand(env)
 			add(a)
 			if i := strings.IndexByte(a, '='); i > 0 { // --file=x.js
 				add(a[i+1:])
@@ -440,8 +460,6 @@ func (e *Engine) execDash(ctx context.Context, d store.Dashboard, src dash.Sourc
 	// no pagers or colours: a pager is a program the CLI would start
 	env["AWS_PAGER"], env["PAGER"], env["GIT_PAGER"], env["PSQL_PAGER"] = "", "cat", "cat", "cat"
 	env["NO_COLOR"] = "1"
-	// so a restart can find and stop commands it left running
-	env["CB_DASH_MARK"] = e.cfg.Epoch
 	if class.SQL == "psql" {
 		// a read-only session: the server refuses any change (D-068)
 		env["PGOPTIONS"] = strings.TrimSpace(env["PGOPTIONS"] + " -c default_transaction_read_only=on")
@@ -490,6 +508,10 @@ func (e *Engine) execDash(ctx context.Context, d store.Dashboard, src dash.Sourc
 		run.State, run.Note = dash.RunFailed, "CloudBuddy couldn't start the command: "+err.Error()
 		return
 	}
+	// so a CloudBuddy that restarts can stop it if this one dies first
+	pidFile := e.dashPidFile(cmd.Process.Pid)
+	_ = os.WriteFile(pidFile, []byte(e.cfg.Epoch+"\n"+procStart(cmd.Process.Pid)), 0o600)
+	defer os.Remove(pidFile)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	var err error
@@ -547,31 +569,48 @@ func stoppedNote(ctx context.Context) string {
 	return "CloudBuddy stopped while this command ran."
 }
 
+func (e *Engine) dashPidFile(pid int) string {
+	dir := filepath.Join(e.cfg.DataDir, "dashboard-commands")
+	_ = os.MkdirAll(dir, 0o700)
+	return filepath.Join(dir, strconv.Itoa(pid))
+}
+
+// procStart is when a process started, as ps prints it: with the pid, it
+// tells one process from a later one that got the same id.
+func procStart(pid int) string {
+	out, err := exec.Command("/bin/ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // killDashLeftovers stops dashboard commands an earlier CloudBuddy left
-// running when it stopped or crashed (best effort: a process can clear its
-// own environment).
+// running when it stopped or crashed. Each command's process group is
+// recorded, with when its leader started, in CloudBuddy's own folder, which
+// commands can't write; a group is only stopped when a process with that id
+// and start time still exists, so a reused process id is left alone (Codex
+// review of D-067).
 func (e *Engine) killDashLeftovers() int {
-	out, err := exec.Command("/bin/ps", "-Ewwax", "-o", "pid=,command=").Output()
+	dir := filepath.Join(e.cfg.DataDir, "dashboard-commands")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0
 	}
 	n := 0
-	self := os.Getpid()
-	for _, line := range strings.Split(string(out), "\n") {
-		i := strings.Index(line, "CB_DASH_MARK=")
-		if i < 0 {
+	for _, ent := range entries {
+		path := filepath.Join(dir, ent.Name())
+		pid, err := strconv.Atoi(ent.Name())
+		raw, rerr := os.ReadFile(path)
+		_ = os.Remove(path)
+		epoch, started, _ := strings.Cut(string(raw), "\n")
+		if err != nil || rerr != nil || pid <= 1 || epoch == e.cfg.Epoch || started == "" {
 			continue
 		}
-		mark := strings.Fields(line[i+len("CB_DASH_MARK="):])
-		if len(mark) > 0 && mark[0] == e.cfg.Epoch {
-			continue
+		if procStart(pid) != started {
+			continue // gone, or someone else's process now
 		}
-		f := strings.Fields(line)
-		pid, err := strconv.Atoi(f[0])
-		if err != nil || pid == self {
-			continue
-		}
-		if syscall.Kill(pid, syscall.SIGKILL) == nil {
+		if syscall.Kill(-pid, syscall.SIGKILL) == nil {
 			n++
 		}
 	}
@@ -1096,6 +1135,9 @@ func (e *Engine) dashDetail(ctx context.Context, d store.Dashboard, rangeKey str
 		sameCmd := hasA && a.Command == src.Command && a.Cwd == sv.Cwd
 		if x, ok := latest[src.Key]; ok {
 			sv.LastRun = runView(x, 16<<10)
+			if x.ExecDigest != "" {
+				sv.Revision = dashRevision(src.Command, sv.Cwd, x.ExecDigest)
+			}
 			switch x.State {
 			case dash.RunBlocked:
 				sv.Verdict, sv.Reason = dash.Never, x.Note
@@ -1203,7 +1245,15 @@ func (e *Engine) SetDashboardSchedule(ctx context.Context, id, refresh string, p
 // any more (the agent changed it after the page loaded).
 var ErrDashChanged = errors.New("the command changed")
 
-func (e *Engine) AllowDashboardSource(ctx context.Context, id, key string, allow bool, shownCommand, shownCwd string) error {
+// dashRevision names a command, its folder and its files' hash, so an answer
+// is for exactly what the page showed (Codex review of D-067: masked text
+// isn't an identity, and files can change while the page is open).
+func dashRevision(command, cwd, digest string) string {
+	sum := sha256.Sum256([]byte(command + "\x00" + cwd + "\x00" + digest))
+	return hex.EncodeToString(sum[:16])
+}
+
+func (e *Engine) AllowDashboardSource(ctx context.Context, id, key string, allow bool, revision string) error {
 	d, err := e.st.GetDashboard(ctx, id)
 	if err != nil {
 		return err
@@ -1220,13 +1270,15 @@ func (e *Engine) AllowDashboardSource(ctx context.Context, id, key string, allow
 	if err != nil {
 		return err
 	}
-	// the answer is for what the page showed, never for a replacement
-	if shownCommand != maskStr(src.Command) || shownCwd != cwd {
+	// the answer is for what the page showed, never for a replacement or
+	// for files that changed since
+	env, _ := (&dashEnvs{e: e, m: map[string]dashEnv{}}).get(cwd)
+	digest := dashDigest(src.Command, cwd, env, dashRun(d, env).projectFolders())
+	if digest == "" || revision == "" || revision != dashRevision(src.Command, cwd, digest) {
 		return ErrDashChanged
 	}
-	env, _ := (&dashEnvs{e: e, m: map[string]dashEnv{}}).get(cwd)
 	if err := e.st.SetDashboardApproval(ctx, id, store.DashboardApproval{SourceKey: key, Command: src.Command, Cwd: cwd,
-		ExecDigest: dashDigest(src.Command, cwd, env, dashRun(d, env).projectFolders()), Allowed: allow}); err != nil {
+		ExecDigest: digest, Allowed: allow}); err != nil {
 		return err
 	}
 	e.bus.Dashboard(id)
@@ -1245,10 +1297,12 @@ func (e *Engine) RefreshDashboardSoon(id string) {
 
 // DeleteDashboard removes a dashboard and its history.
 func (e *Engine) DeleteDashboard(ctx context.Context, id string) error {
-	e.stopDashboard(id)
+	// the row first: a refresh that starts after this finds nothing to run,
+	// and one already going is stopped next
 	if err := e.st.DeleteDashboard(ctx, id); err != nil {
 		return err
 	}
+	e.stopDashboard(id)
 	e.bus.Publish(bus.Event{Type: "dashboards"})
 	return nil
 }

@@ -165,14 +165,15 @@ type DashboardRun struct {
 	Output     string
 	Truncated  bool
 	Note       string
+	ExecDigest string
 }
 
 // keepRuns is how many runs of each command are kept.
 const keepRuns = 30
 
 func (s *Store) AddDashboardRun(ctx context.Context, id string, r DashboardRun) error {
-	_, err := s.db.Exec(ctx, `INSERT INTO dashboard_runs(dashboard_id,source_key,started_at,duration_ms,state,exit_code,output,truncated,note)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id, r.SourceKey, r.StartedAt, r.DurationMs, r.State, r.ExitCode, r.Output, r.Truncated, r.Note)
+	_, err := s.db.Exec(ctx, `INSERT INTO dashboard_runs(dashboard_id,source_key,started_at,duration_ms,state,exit_code,output,truncated,note,exec_digest)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, r.SourceKey, r.StartedAt, r.DurationMs, r.State, r.ExitCode, r.Output, r.Truncated, r.Note, r.ExecDigest)
 	if err != nil {
 		return err
 	}
@@ -188,10 +189,10 @@ func (s *Store) AddDashboardRun(ctx context.Context, id string, r DashboardRun) 
 func (s *Store) LatestDashboardRuns(ctx context.Context, id string) (latest, lastOK map[string]DashboardRun, err error) {
 	latest, lastOK = map[string]DashboardRun{}, map[string]DashboardRun{}
 	rows, err := s.db.Query(ctx, `
-		(SELECT DISTINCT ON (source_key) 'latest', source_key, started_at, duration_ms, state, exit_code, output, truncated, note
+		(SELECT DISTINCT ON (source_key) 'latest', source_key, started_at, duration_ms, state, exit_code, output, truncated, note, exec_digest
 			FROM dashboard_runs WHERE dashboard_id=$1 ORDER BY source_key, id DESC)
 		UNION ALL
-		(SELECT DISTINCT ON (source_key) 'ok', source_key, started_at, duration_ms, state, exit_code, output, truncated, note
+		(SELECT DISTINCT ON (source_key) 'ok', source_key, started_at, duration_ms, state, exit_code, output, truncated, note, exec_digest
 			FROM dashboard_runs WHERE dashboard_id=$1 AND state='ok' ORDER BY source_key, id DESC)`, id)
 	if err != nil {
 		return nil, nil, err
@@ -200,7 +201,7 @@ func (s *Store) LatestDashboardRuns(ctx context.Context, id string) (latest, las
 	for rows.Next() {
 		var which string
 		var r DashboardRun
-		if err := rows.Scan(&which, &r.SourceKey, &r.StartedAt, &r.DurationMs, &r.State, &r.ExitCode, &r.Output, &r.Truncated, &r.Note); err != nil {
+		if err := rows.Scan(&which, &r.SourceKey, &r.StartedAt, &r.DurationMs, &r.State, &r.ExitCode, &r.Output, &r.Truncated, &r.Note, &r.ExecDigest); err != nil {
 			return nil, nil, err
 		}
 		if which == "latest" {

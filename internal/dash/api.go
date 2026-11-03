@@ -50,6 +50,10 @@ type SourceView struct {
 	Reason   string    `json:"reason,omitempty"`
 	Approval *Approval `json:"approval,omitempty"`
 	LastRun  *RunView  `json:"lastRun,omitempty"`
+	// Revision names exactly what the page shows for a command that needs
+	// the user's OK: the command, its folder and the files it runs, as of
+	// its last run. An answer must send it back.
+	Revision string `json:"revision,omitempty"`
 }
 
 // Detail is the dashboard page.
