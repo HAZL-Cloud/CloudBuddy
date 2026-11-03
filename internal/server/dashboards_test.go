@@ -131,12 +131,21 @@ func TestDashboardEndToEnd(t *testing.T) {
 		t.Errorf("counts: needsOk=%d failing=%d", d.NeedsOK, d.Failing)
 	}
 
-	// an answer for a command the page didn't show is refused
-	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/sources/users/decision", map[string]string{"decision": "allow", "command": "./other.sh", "cwd": users.Cwd}, nil); st != 409 {
-		t.Fatalf("allowing a command the page didn't show: %d", st)
+	// an answer for something the page didn't show is refused: another
+	// revision, or files that changed after the page showed them
+	if users.Revision == "" {
+		t.Fatal("a command that needs an OK has no revision")
 	}
+	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/sources/users/decision", map[string]string{"decision": "allow", "revision": "nope"}, nil); st != 409 {
+		t.Fatalf("allowing a revision the page didn't show: %d", st)
+	}
+	must(os.WriteFile(filepath.Join(e.work, "count-users.sh"), []byte("#!/bin/sh\necho 666\n"), 0o755))
+	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/sources/users/decision", map[string]string{"decision": "allow", "revision": users.Revision}, nil); st != 409 {
+		t.Fatalf("allowing after the script changed under the page: %d", st)
+	}
+	must(os.WriteFile(filepath.Join(e.work, "count-users.sh"), []byte("#!/bin/sh\necho 1204\n"), 0o755))
 	// the user allows the script: it runs
-	if st, b := e.do("POST", "/api/dashboards/"+app.ID+"/sources/users/decision", map[string]string{"decision": "allow", "command": users.Command, "cwd": users.Cwd}, nil); st != 200 {
+	if st, b := e.do("POST", "/api/dashboards/"+app.ID+"/sources/users/decision", map[string]string{"decision": "allow", "revision": users.Revision}, nil); st != 200 {
 		t.Fatalf("allow: %d %s", st, b)
 	}
 	d = e.waitDash(app.ID, "the script to run", func(d dash.Detail) bool {
@@ -152,10 +161,13 @@ func TestDashboardEndToEnd(t *testing.T) {
 	// allowing can't make a delete run
 	cleanup := source(d, "cleanup")
 	before := cleanup.LastRun.At
-	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/sources/cleanup/decision", map[string]string{"decision": "allow", "command": cleanup.Command, "cwd": cleanup.Cwd}, nil); st != 200 {
-		t.Fatalf("allow cleanup: %d", st)
+	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/sources/cleanup/decision", map[string]string{"decision": "allow", "revision": cleanup.Revision}, nil); st != 409 {
+		t.Fatalf("a command that can never run has nothing to allow: %d", st)
 	}
-	d = e.waitDash(app.ID, "the refresh after the OK", func(d dash.Detail) bool { return source(d, "cleanup").LastRun.At.After(before) })
+	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/refresh", nil, nil); st != 202 {
+		t.Fatalf("refresh: %d", st)
+	}
+	d = e.waitDash(app.ID, "the next refresh", func(d dash.Detail) bool { return source(d, "cleanup").LastRun.At.After(before) })
 	if s := source(d, "cleanup"); s.LastRun.State != dash.RunBlocked {
 		t.Errorf("a delete ran after an OK: %+v", s.LastRun)
 	}
@@ -185,7 +197,7 @@ func TestDashboardEndToEnd(t *testing.T) {
 	if st, _ := e.do("PUT", "/api/dashboards/"+app.ID+"/schedule", map[string]any{"refresh": "10s"}, nil); st != 400 {
 		t.Errorf("too often accepted: %d", st)
 	}
-	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/sources/users/decision", map[string]string{"decision": "allow", "command": users.Command, "cwd": users.Cwd}, map[string]string{"Origin": "http://evil.example"}); st != 403 {
+	if st, _ := e.do("POST", "/api/dashboards/"+app.ID+"/sources/users/decision", map[string]string{"decision": "allow", "revision": users.Revision}, map[string]string{"Origin": "http://evil.example"}); st != 403 {
 		t.Errorf("another origin could allow a command: %d", st)
 	}
 	if st, _ := e.do("POST", "/gate/dashboards/tool", map[string]any{"tool": "list_dashboards"}, nil); st != 403 {
@@ -225,7 +237,7 @@ func TestDashboardDeleteStopsCommands(t *testing.T) {
 	}
 	id := list[0].ID
 	users := source(e.dashboard(id), "users")
-	if st, _ := e.do("POST", "/api/dashboards/"+id+"/sources/users/decision", map[string]string{"decision": "allow", "command": users.Command, "cwd": users.Cwd}, nil); st != 200 {
+	if st, _ := e.do("POST", "/api/dashboards/"+id+"/sources/users/decision", map[string]string{"decision": "allow", "revision": users.Revision}, nil); st != 200 {
 		t.Fatalf("allow: %d", st)
 	}
 	var pid int

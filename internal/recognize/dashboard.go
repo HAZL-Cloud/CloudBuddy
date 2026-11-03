@@ -8,96 +8,11 @@ import (
 // nobody to ask. They are stricter than the chat gate: anything they can't
 // read asks the user once.
 
-// dashTextTools may follow a database query in a pipe: they only shape text.
-// (safeTools also has tee, mkdir and touch, which write files.)
-var dashTextTools = map[string]bool{"echo": true, "printf": true, "jq": true, "yq": true, "grep": true, "egrep": true,
-	"fgrep": true, "head": true, "tail": true, "wc": true, "uniq": true, "cut": true, "tr": true, "column": true, "cat": true,
-	"base64": true, "true": true}
-
 // pgEnvAllowed are the libpq variables a psql read may set in the command.
 // PGOPTIONS isn't one of them: CloudBuddy sets it to keep the session
 // read-only.
 var pgEnvAllowed = map[string]bool{"PGHOST": true, "PGPORT": true, "PGUSER": true, "PGDATABASE": true, "PGPASSWORD": true,
 	"PGSSLMODE": true, "PGCONNECT_TIMEOUT": true, "PGAPPNAME": true, "TZ": true, "LANG": true, "LC_ALL": true}
-
-// SQLCheck is what SQLRead found.
-type SQLCheck struct {
-	Engine string // psql | sqlite3 when the command is one read-only query
-	Why    string // why it isn't, when it is psql or sqlite3
-	// Write is a word that only appears in queries that change data
-	// (DELETE, UPDATE, DROP…), found in a psql or sqlite3 query.
-	Write string
-}
-
-// SQLRead reports whether a command is one read-only database query: psql
-// or sqlite3 running a single SELECT-like statement, maybe piped into text
-// tools. CloudBuddy then runs psql in a read-only session; sqlite3 must open
-// the file -readonly.
-func SQLRead(command string) SQLCheck {
-	segs := expand(splitShell(command))
-	if len(segs) == 0 || (segs[0].Prog != "psql" && segs[0].Prog != "sqlite3") {
-		return SQLCheck{Why: "it isn't psql or sqlite3"}
-	}
-	first := segs[0]
-	check := SQLCheck{}
-	no := func(why string) SQLCheck { check.Why = why; return check }
-	sqls := sqlArgs(first)
-	for _, q := range sqls {
-		if w := sqlWriteWord(q); w != "" {
-			check.Write = w
-			return no("the query has " + strings.ToUpper(w) + " in it")
-		}
-	}
-	if !PlainShell(command) {
-		return no("it uses shell features CloudBuddy can't read")
-	}
-	if writesFiles(command) {
-		return no("it writes to a file")
-	}
-	if first.Opaque || first.Nested || first.Background {
-		return no("CloudBuddy can't read how it runs")
-	}
-	if strings.Contains(first.ProgPath, "/") {
-		return no("it names a copy of the program by its path")
-	}
-	for _, s := range segs[1:] {
-		if !dashTextTools[s.Prog] || !textToolSafe(s) {
-			return no("it pipes the result into " + progName(s) + " in a way CloudBuddy can't be sure only reads")
-		}
-	}
-	switch first.Prog {
-	case "psql":
-		for k := range first.Env {
-			if !pgEnvAllowed[k] {
-				return no("it sets " + k)
-			}
-		}
-		if why := psqlRead(first.Args); why != "" {
-			return no(why)
-		}
-	case "sqlite3":
-		if len(first.Env) > 0 {
-			return no("it sets environment variables")
-		}
-		if why := sqliteRead(first.Args); why != "" {
-			return no(why)
-		}
-	}
-	check.Engine = first.Prog
-	return check
-}
-
-// sqlArgs is every argument of a psql or sqlite3 command that could be a
-// query: they are only checked for write words here.
-func sqlArgs(s segment) []string {
-	var out []string
-	for _, a := range s.Args {
-		if strings.ContainsAny(a, " \n") {
-			out = append(out, a)
-		}
-	}
-	return out
-}
 
 func sqlWriteWord(q string) string {
 	for _, w := range sqlWords(q) {
@@ -115,72 +30,6 @@ var sqlChanges = map[string]bool{"insert": true, "update": true, "delete": true,
 	"truncate": true, "drop": true, "alter": true, "create": true, "grant": true, "revoke": true, "into": true,
 	"copy": true, "call": true, "do": true, "execute": true, "vacuum": true, "reindex": true, "cluster": true,
 	"refresh": true, "attach": true, "detach": true}
-
-// PlainShell reports whether a command uses only shell syntax CloudBuddy
-// reads fully: words, quotes, plain $NAME variables, pipes, ; && ||, and
-// redirections. Anything else can run code the words don't show (Codex
-// review of D-067): zsh glob qualifiers like *(e:'rm x':), subshells and
-// grouping, command, process and arithmetic substitution ($(…), `…`,
-// <(…), =(…), $[…]), ${…} expansions, here-documents, and background &.
-// Every dashboard read must pass it.
-func PlainShell(cmd string) bool {
-	rs := []rune(cmd)
-	at := func(i int) rune {
-		if i >= 0 && i < len(rs) {
-			return rs[i]
-		}
-		return 0
-	}
-	dollarOK := func(i int) bool { // rs[i] == '$': only $NAME
-		n := at(i + 1)
-		return n == '_' || (n >= 'A' && n <= 'Z') || (n >= 'a' && n <= 'z')
-	}
-	for i := 0; i < len(rs); i++ {
-		c := rs[i]
-		switch c {
-		case '\\':
-			i++
-		case '\'':
-			for i++; i < len(rs) && rs[i] != '\''; i++ {
-			}
-		case '"':
-			for i++; i < len(rs) && rs[i] != '"'; i++ {
-				switch rs[i] {
-				case '\\':
-					i++
-				case '`':
-					return false
-				case '$':
-					if !dollarOK(i) {
-						return false
-					}
-				}
-			}
-		case '(', ')', '`', '{', '}':
-			return false
-		case '$':
-			if !dollarOK(i) {
-				return false
-			}
-		case '<':
-			if at(i+1) == '<' || at(i+1) == '(' {
-				return false
-			}
-		case '>':
-			if at(i+1) == '(' {
-				return false
-			}
-		case '&':
-			// && and the stream copies 2>&1, >&2 are fine; a lone & runs in the background
-			if at(i+1) == '&' {
-				i++
-			} else if at(i-1) != '>' && at(i-1) != '<' {
-				return false
-			}
-		}
-	}
-	return true
-}
 
 // dashLocalTools only read files or print text: a command made of them alone
 // is a read (when it reads nothing outside the project). textToolSafe checks
@@ -237,24 +86,6 @@ func textToolSafe(s segment) bool {
 				strings.Contains(a, "env") || strings.Contains(a, "ENV") {
 				return false
 			}
-		}
-	}
-	return true
-}
-
-// TextOnly reports whether a command only reads files and prints text, with
-// tools like cat, grep, wc and jq.
-func TextOnly(command string) bool {
-	if !PlainShell(command) || writesFiles(command) {
-		return false
-	}
-	segs := expand(splitShell(command))
-	if len(segs) == 0 {
-		return false
-	}
-	for _, s := range segs {
-		if !dashLocalTools[s.Prog] || !textToolSafe(s) {
-			return false
 		}
 	}
 	return true
@@ -407,7 +238,7 @@ var sqlWrites = map[string]bool{"insert": true, "update": true, "delete": true, 
 // sqlite3 shell) files on this computer.
 var sqlRiskyCalls = []string{"pg_terminate_backend", "pg_cancel_backend", "pg_reload_conf", "pg_rotate_logfile",
 	"pg_promote", "pg_switch_wal", "pg_create_", "pg_drop_", "pg_advisory", "pg_read_", "pg_ls_", "pg_file_",
-	"pg_stat_reset", "pg_logical_", "pg_replication_", "pg_backup_", "pg_import_", "set_config", "dblink", "lo_",
+	"pg_stat_reset", "pg_logical_", "pg_replication_", "pg_backup_", "pg_import_", "set_config", "dblink", "dblink_", "lo_",
 	"query_to_", "xpath", "writefile", "readfile", "edit", "load_extension", "fts3_tokenizer", "sqlar_", "zipfile"}
 
 // readOnlySQL checks that sql is one statement that only reads.
@@ -495,49 +326,6 @@ func sqlWords(s string) []string {
 	return out
 }
 
-// writesFiles finds output redirections other than to /dev/null or another
-// stream, outside quotes.
-func writesFiles(cmd string) bool {
-	rs := []rune(cmd)
-	for i := 0; i < len(rs); i++ {
-		switch rs[i] {
-		case '\'', '"':
-			q := rs[i]
-			for i++; i < len(rs) && rs[i] != q; i++ {
-				if q == '"' && rs[i] == '\\' {
-					i++
-				}
-			}
-		case '\\':
-			i++
-		case '>':
-			rest := string(rs[i+1:])
-			rest = strings.TrimPrefix(rest, ">")
-			rest = strings.TrimLeft(rest, " ")
-			if strings.HasPrefix(rest, "&1") || strings.HasPrefix(rest, "&2") || strings.HasPrefix(rest, "/dev/null") {
-				continue
-			}
-			return true
-		}
-	}
-	return false
-}
-
-// DashboardWrites reports whether a command writes files: a redirection to
-// a file, or tee, mkdir or touch.
-func DashboardWrites(command string) bool {
-	if writesFiles(command) {
-		return true
-	}
-	for _, s := range expand(splitShell(command)) {
-		switch s.Prog {
-		case "tee", "mkdir", "touch":
-			return true
-		}
-	}
-	return false
-}
-
 // Programs lists the programs a command runs, as written ("psql",
 // "./scripts/count.sh"), so the caller can check where each one lives.
 func Programs(command string) []string {
@@ -546,19 +334,6 @@ func Programs(command string) []string {
 		if s.ProgPath != "" {
 			out = append(out, s.ProgPath)
 		}
-	}
-	return out
-}
-
-// Argv lists each simple command's program and arguments as the shell will
-// see them, quotes removed: what a dashboard approval hashes.
-func Argv(command string) [][]string {
-	var out [][]string
-	for _, s := range expand(splitShell(command)) {
-		if s.ProgPath == "" {
-			continue
-		}
-		out = append(out, append([]string{s.ProgPath}, s.Args...))
 	}
 	return out
 }

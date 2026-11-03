@@ -46,7 +46,10 @@ CREATE TABLE dashboard_runs (
     exit_code    INT,
     output       TEXT NOT NULL DEFAULT '',
     truncated    BOOLEAN NOT NULL DEFAULT false,
-    note         TEXT NOT NULL DEFAULT ''
+    note         TEXT NOT NULL DEFAULT '',
+    -- for a command that needs the user's OK: the hash of the files it ran
+    -- or would run, so an OK is for what the page showed
+    exec_digest  TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX dashboard_runs_latest ON dashboard_runs(dashboard_id, source_key, id DESC);
 

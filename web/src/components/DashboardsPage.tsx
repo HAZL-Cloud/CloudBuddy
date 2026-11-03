@@ -318,7 +318,7 @@ function Header({ d, onOpenChat, onDeleted }: { d: DashboardDetail; onOpenChat: 
 // The answer is only for the command the page showed; a 409 means the agent changed it since.
 function decideError(err: unknown): string {
   return err instanceof ApiError && err.status === 409
-    ? 'The command changed after this page loaded, so nothing was allowed. Look at the new one.'
+    ? 'The command or the files it runs changed after this page showed them, so nothing was allowed. Look again.'
     : "Couldn't send your answer, so nothing changed. Try again."
 }
 
@@ -327,7 +327,7 @@ function SourceDecision({ dashboardId, source }: { dashboardId: string; source: 
   const toast = useToast()
   const send = (decision: 'allow' | 'deny') =>
     decide.mutate(
-      { id: dashboardId, key: source.key, decision, command: source.command, cwd: source.cwd },
+      { id: dashboardId, key: source.key, decision, revision: source.revision ?? '' },
       {
         onSuccess: () => toast(decision === 'allow' ? 'Allowed. It runs now and on every refresh.' : 'Not allowed. It won’t run.'),
         onError: (err) => toast(decideError(err)),
@@ -403,7 +403,7 @@ function Sources({ d }: { d: DashboardDetail }) {
                       disabled={decide.isPending}
                       onClick={() =>
                         decide.mutate(
-                          { id: d.id, key: s.key, decision: 'deny', command: s.command, cwd: s.cwd },
+                          { id: d.id, key: s.key, decision: 'deny', revision: s.revision ?? '' },
                           { onSuccess: () => toast('It won’t run any more.'), onError: (err) => toast(decideError(err)) },
                         )
                       }
@@ -418,7 +418,7 @@ function Sources({ d }: { d: DashboardDetail }) {
                       disabled={decide.isPending}
                       onClick={() =>
                         decide.mutate(
-                          { id: d.id, key: s.key, decision: 'allow', command: s.command, cwd: s.cwd },
+                          { id: d.id, key: s.key, decision: 'allow', revision: s.revision ?? '' },
                           { onSuccess: () => toast('Allowed. It runs now.'), onError: (err) => toast(decideError(err)) },
                         )
                       }

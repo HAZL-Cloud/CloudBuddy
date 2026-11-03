@@ -74,16 +74,18 @@ func Tools() []map[string]any {
 		"description": `Save a dashboard the user can keep open in CloudBuddy. CloudBuddy reruns its commands itself on a timer, without you, and draws the tiles with its own widgets. Use it when the user wants numbers, charts or tables that stay fresh (users, signups, revenue, errors, deploy status). It returns what each command printed and what each tile shows: fix anything that failed and save again with the same id.
 
 How to build one:
-1. Find the data with shell commands first, and make each command print only the data: a number, JSON or CSV. Use jq, psql -tA or --csv, sqlite3 -readonly -safe -json, a CLI's --output json.
+1. Find the data with shell commands first, and make each command print only the data: a number, JSON or CSV. Use jq, psql -XtA or -X --csv, sqlite3 -readonly -safe -json, a CLI's --output json.
 2. One source per command; tiles point at a source and, for JSON, a path into it.
 3. A number tile records its value on every refresh, so its trend, sparkline and line chart fill in over time. For history that already exists (signups per day), return rows and use a line or bars tile with labelField and valueField.
 
-What runs on the timer (CloudBuddy checks every command on every run):
-- Runs by itself: cloud CLI reads (aws ... describe/list/get, stripe ... list/retrieve, gh ... list/view), text tools on project files (cat, grep, wc, jq), and database reads: psql with one SELECT in -c (CloudBuddy runs it in a read-only session, without ~/.psqlrc) and sqlite3 -readonly -safe with one SELECT. Only plain shell: words, quotes, $NAME variables, pipes, ; and &&; no $(...), ${...}, subshells or zsh glob qualifiers.
-- Waits for the user's OK once, on the dashboard page: scripts and programs (node, python, npm run, ./bin/...), web requests (curl), anything that writes files or that CloudBuddy can't read. It asks again if the command or its script changes. Tell the user when this happens.
-- Never runs from a dashboard: deletes, payments, messages to people, anything that can't be undone or that changes live mode, background commands. Inside a script, a CLI call like that is stopped.
+How to write a command: plain shell only. Words, 'single' and "double" quotes, $NAME variables, pipes |, && and ;, and only the redirections 2>/dev/null, 2>&1 and >&2. No $(...), ${...}, backticks, globs (*), ~, subshells, < or > to files, or several lines: CloudBuddy can't tell what such a command runs, so it never runs it. Put anything bigger in a script file in the project and run that.
 
-Example: {"title": "Users", "refresh": "15m", "sources": [{"key": "users", "command": "psql \"$DATABASE_URL\" -tAc 'select count(*) from users'"}, {"key": "daily", "command": "psql \"$DATABASE_URL\" --csv -c 'select date(created_at) as day, count(*) as signups from users group by 1 order by 1 desc limit 30'", "format": "csv"}], "tiles": [{"type": "number", "title": "Users", "source": "users", "unit": "users", "good": "up"}, {"type": "line", "title": "Users over time", "source": "users"}, {"type": "bars", "title": "Signups per day", "source": "daily", "labelField": "day", "valueField": "signups"}]}`,
+What runs on the timer (CloudBuddy checks every command on every run):
+- Runs by itself: cloud CLI reads (aws ... describe/list/get, stripe ... list/retrieve, gh ... list/view), text tools on project files (cat, grep, wc, jq, without options that write), and database reads: psql -X with one SELECT in -c (CloudBuddy runs it in a read-only session) and sqlite3 -readonly -safe with one SELECT.
+- Waits for the user's OK once, on the dashboard page: scripts and programs (node, python, npm run, ./bin/...), web requests (curl), anything CloudBuddy doesn't know only reads. It asks again if the command or the files it runs change. Tell the user when this happens.
+- Never runs from a dashboard: deletes, payments, messages to people, anything that can't be undone or that changes live mode, SQL that changes data, background commands, and commands outside plain shell. Inside a script, a CLI call like that is stopped.
+
+Example: {"title": "Users", "refresh": "15m", "sources": [{"key": "users", "command": "psql \"$DATABASE_URL\" -XtAc 'select count(*) from users'"}, {"key": "daily", "command": "psql \"$DATABASE_URL\" -X --csv -c 'select date(created_at) as day, count(*) as signups from users group by 1 order by 1 desc limit 30'", "format": "csv"}], "tiles": [{"type": "number", "title": "Users", "source": "users", "unit": "users", "good": "up"}, {"type": "line", "title": "Users over time", "source": "users"}, {"type": "bars", "title": "Signups per day", "source": "daily", "labelField": "day", "valueField": "signups"}]}`,
 		"inputSchema": map[string]any{
 			"type":     "object",
 			"required": []string{"title", "refresh", "sources", "tiles"},
