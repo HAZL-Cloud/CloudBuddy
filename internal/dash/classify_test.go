@@ -69,6 +69,13 @@ func TestClassifyGolden(t *testing.T) {
 		{`cat a.json # rm x`, Never, ""},
 		{`cat a\ b.json`, Never, ""},
 		{`$CMD status.json`, Never, "variable"},
+		{`=rm x`, Never, "="},
+		{`cat =ls`, Never, "="},
+		{`cat $1`, Never, ""},
+		{`cat a.json 2>&1>x`, Never, ""},
+		{`cat a.json 2>/dev/nullx`, Never, ""},
+		{`cat a.json;`, Never, ""},
+		{`cat a.json ||rm x`, Never, "rm"},
 
 		// databases: anything but one plain read needs the OK; data changes never run
 		{`psql "$DATABASE_URL" -c "delete from users"`, Never, "delete"},
@@ -130,6 +137,15 @@ func TestClassifyGolden(t *testing.T) {
 		{`echo hi | tee x`, NeedsOK, "tee"},
 
 		// never from a dashboard
+		{`cat a.json && rm x`, Never, "rm"},
+		{`cat list.txt | xargs rm`, Never, "rm"},
+		{`env -i timeout 5 rm -rf data`, Never, "rm"},
+		{`"rm" x`, Never, "rm"},
+		{`find . -name '*.log' -delete`, Never, "find"},
+		{`find . -exec cat '{}' ';'`, Never, "find"},
+		{`mv a.json b.json`, Never, "mv"},
+		{`pkill node`, Never, "pkill"},
+		{`grep rm notes.txt`, Read, ""},
 		{`aws s3 rm s3://bucket/x`, Never, "delete"},
 		{`stripe refunds create --charge ch_1`, Never, "money"},
 		{`resend emails send --to a@b.c`, Never, ""},
