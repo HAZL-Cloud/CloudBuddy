@@ -84,6 +84,9 @@ func Classify(in Input) Class {
 	if rule == model.RuleOff && d.Kind == "cloud" {
 		return never(d.Provider + " is turned off in Connections.")
 	}
+	if prog := recognize.LocalChange(segs); prog != "" {
+		return never("Dashboards only fetch data, and this changes or deletes files or processes (" + prog + ").")
+	}
 	if w := recognize.SQLWrite(in.Command); w != "" {
 		return never("Dashboards only fetch data, and this query changes data (" + strings.ToUpper(w) + ").")
 	}

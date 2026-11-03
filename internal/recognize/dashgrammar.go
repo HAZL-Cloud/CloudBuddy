@@ -249,6 +249,9 @@ func ParseDashCommand(cmd string) ([]DashSegment, string) {
 			if !ok {
 				return nil, "it redirects output somewhere other than 2>/dev/null, 2>&1 or >&2"
 			}
+		case c == '=' && !inWord:
+			// zsh turns =name at the start of a word into a program's path
+			return nil, "a word starts with =, which zsh turns into a program"
 		case plainChar(c):
 			lit.WriteRune(c)
 			inWord = true
@@ -423,6 +426,53 @@ func SQLWrite(command string) string {
 		for _, q := range queries {
 			if w := sqlWriteWord(q); w != "" {
 				return w
+			}
+		}
+	}
+	return ""
+}
+
+// localChanges are programs that delete or change files, or stop
+// processes: a dashboard never needs them, so they never run from one.
+var localChanges = map[string]bool{"rm": true, "rmdir": true, "unlink": true, "shred": true, "mv": true, "dd": true,
+	"truncate": true, "chmod": true, "chown": true, "chflags": true, "ln": true, "kill": true, "killall": true,
+	"pkill": true, "srm": true, "trash": true}
+
+// runWrappers start the program named after their own options.
+var runWrappers = map[string]bool{"command": true, "exec": true, "env": true, "nice": true, "timeout": true, "gtimeout": true,
+	"sudo": true, "xargs": true, "nohup": true, "time": true, "caffeinate": true, "stdbuf": true, "doas": true}
+
+// LocalChange names a program in the command that deletes or changes files
+// or stops processes, also when a wrapper (xargs, env, timeout…) starts
+// it, or find with -delete or -exec. "" when there is none.
+func LocalChange(segs []DashSegment) string {
+	for _, s := range segs {
+		words := s.Words
+		for len(words) > 0 {
+			prog := filepath.Base(words[0].Text())
+			if localChanges[prog] {
+				return prog
+			}
+			if prog == "find" {
+				for _, w := range words[1:] {
+					switch w.Text() {
+					case "-delete", "-exec", "-execdir", "-ok", "-okdir":
+						return "find " + w.Text()
+					}
+				}
+			}
+			if !runWrappers[prog] {
+				break
+			}
+			// skip the wrapper's options, numbers and NAME=value, to the program it starts
+			words = words[1:]
+			for len(words) > 0 {
+				t := words[0].Text()
+				if strings.HasPrefix(t, "-") || strings.Contains(t, "=") || strings.Trim(t, "0123456789.smhd") == "" {
+					words = words[1:]
+					continue
+				}
+				break
 			}
 		}
 	}
