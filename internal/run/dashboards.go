@@ -78,7 +78,7 @@ func (e *Engine) StartDashboards(ctx context.Context, every time.Duration) {
 }
 
 func (e *Engine) runDue(ctx context.Context) {
-	ids, err := e.st.DueDashboards(ctx, time.Now())
+	ids, err := e.st.DueDashboards(ctx)
 	if err != nil {
 		return
 	}
@@ -86,7 +86,7 @@ func (e *Engine) runDue(ctx context.Context) {
 		if e.dashBusy(id) {
 			continue
 		}
-		go func(id string) { _ = e.refresh(ctx, id, true) }(id)
+		go func(id string) { _ = e.refresh(ctx, id, refreshScheduled) }(id)
 	}
 }
 
@@ -97,39 +97,93 @@ func (e *Engine) dashBusy(id string) bool {
 	return busy
 }
 
+// dashRefresh is one dashboard's running refresh.
+type dashRefresh struct {
+	seq  uint64        // e.dashSeq when it started
+	done chan struct{} // closed when it has stored what it ran
+	stop context.CancelCauseFunc
+}
+
+// refreshMode is what a refresh does about one already going.
+type refreshMode int
+
+const (
+	// refreshJoin waits for the one going: nothing changed since it began.
+	refreshJoin refreshMode = iota
+	// refreshScheduled is refreshJoin, and doesn't run a paused dashboard.
+	refreshScheduled
+	// refreshChanged comes after a change the commands depend on (a save,
+	// the user's answer): one going that began before the call ran what was
+	// there before, so this waits for it and then runs its own (Codex
+	// review, 2026-11-10: a save's refresh joined the old one and reported
+	// its results).
+	refreshChanged
+)
+
 // RefreshDashboard runs every command of a dashboard once and stores what
 // came back, even when the dashboard is paused (the user or the agent asked
 // for it). If a refresh is already going, it waits for that one.
 func (e *Engine) RefreshDashboard(ctx context.Context, id string) error {
-	return e.refresh(ctx, id, false)
+	return e.refresh(ctx, id, refreshJoin)
 }
 
-// refresh is RefreshDashboard; a scheduled one doesn't run a paused
-// dashboard. Pausing writes the database first and then stops what is
-// registered, and this reads the dashboard only after registering, so no
-// scheduled refresh slips past a pause (Codex review of D-067).
-func (e *Engine) refresh(ctx context.Context, id string, scheduled bool) error {
+// refresh is RefreshDashboard. Pausing writes the database first and then
+// stops what is registered, and this reads the dashboard only after
+// registering, so no scheduled refresh slips past a pause (Codex review of
+// D-067). For the same reason a refresh registered after a change reads
+// the changed dashboard, so refreshChanged may join it. One still waiting
+// to start when the user pauses or deletes the dashboard doesn't start
+// (Codex review of the fix, 2026-11-10).
+func (e *Engine) refresh(ctx context.Context, id string, mode refreshMode) error {
+	return e.refreshAsked(ctx, id, mode, e.askRefresh(id))
+}
+
+// refreshAsk is when a refresh was asked for: how many refreshes had
+// started and how often the dashboard had been paused or deleted. It is
+// taken when asked, not when a goroutine gets to it, so a pause in between
+// counts.
+type refreshAsk struct{ seq, halts uint64 }
+
+func (e *Engine) askRefresh(id string) refreshAsk {
 	e.dashMu.Lock()
-	if ch, busy := e.dashRunning[id]; busy {
+	defer e.dashMu.Unlock()
+	return refreshAsk{seq: e.dashSeq, halts: e.dashHalts[id]}
+}
+
+func (e *Engine) refreshAsked(ctx context.Context, id string, mode refreshMode, ask refreshAsk) error {
+	e.dashMu.Lock()
+	for {
+		cur, busy := e.dashRunning[id]
+		if !busy {
+			break
+		}
+		join := mode != refreshChanged || cur.seq > ask.seq
 		e.dashMu.Unlock()
 		select {
-		case <-ch:
+		case <-cur.done:
 		case <-ctx.Done():
+			return nil
 		}
+		if join {
+			return nil
+		}
+		e.dashMu.Lock()
+	}
+	if e.dashHalts[id] != ask.halts {
+		e.dashMu.Unlock()
 		return nil
 	}
-	ch := make(chan struct{})
-	e.dashRunning[id] = ch
-	ctx, stop := context.WithCancelCause(ctx)
-	e.dashStop[id] = stop
+	e.dashSeq++
+	cur := &dashRefresh{seq: e.dashSeq, done: make(chan struct{})}
+	ctx, cur.stop = context.WithCancelCause(ctx)
+	e.dashRunning[id] = cur
 	e.dashMu.Unlock()
 	defer func() {
-		stop(nil)
+		cur.stop(nil)
 		e.dashMu.Lock()
 		delete(e.dashRunning, id)
-		delete(e.dashStop, id)
 		e.dashMu.Unlock()
-		close(ch)
+		close(cur.done)
 		e.bus.Dashboard(id)
 	}()
 
@@ -137,7 +191,7 @@ func (e *Engine) refresh(ctx context.Context, id string, scheduled bool) error {
 	if err != nil {
 		return err
 	}
-	if scheduled && d.Paused {
+	if mode == refreshScheduled && d.Paused {
 		return nil
 	}
 	var spec dash.Spec
@@ -145,7 +199,7 @@ func (e *Engine) refresh(ctx context.Context, id string, scheduled bool) error {
 		return err
 	}
 	now := time.Now().UTC()
-	if err := e.st.StartDashboardRun(ctx, id, now.Add(time.Duration(d.RefreshSeconds)*time.Second)); err != nil {
+	if err := e.st.StartDashboardRun(ctx, id); err != nil {
 		return err
 	}
 	e.bus.Dashboard(id) // the page shows "Refreshing…"
@@ -168,7 +222,8 @@ func (e *Engine) refresh(ctx context.Context, id string, scheduled bool) error {
 		}
 		byKey[r.SourceKey] = r
 	}
-	values := map[string]float64{}
+	revs := spec.SourceRevs(d.Workdir)
+	values := map[string]store.DashboardValue{}
 	for series, sp := range spec.Tracked() {
 		r, ok := byKey[sp[0]]
 		if !ok || r.State != dash.RunOK || r.Truncated {
@@ -183,7 +238,7 @@ func (e *Engine) refresh(ctx context.Context, id string, scheduled bool) error {
 			continue
 		}
 		if n, ok := dash.Number(v); ok {
-			values[series] = n
+			values[series] = store.DashboardValue{Value: n, SourceRev: revs[sp[0]]}
 		}
 	}
 	return e.st.AddDashboardPoints(bg, id, now, values)
@@ -277,7 +332,7 @@ func (e *Engine) classifyDash(ctx context.Context, d store.Dashboard, command, c
 
 // dashSource decides and runs one command.
 func (e *Engine) dashSource(ctx context.Context, d store.Dashboard, src dash.Source, envs *dashEnvs) store.DashboardRun {
-	run := store.DashboardRun{SourceKey: src.Key, StartedAt: time.Now().UTC()}
+	run := store.DashboardRun{SourceKey: src.Key, SourceRev: dash.SourceRev(d.Workdir, src), StartedAt: time.Now().UTC()}
 	cwd, err := dashCwd(d, src.Cwd)
 	if err != nil {
 		run.State, run.Note = dash.RunBlocked, "It can't run: "+err.Error()+"."
@@ -303,18 +358,25 @@ func (e *Engine) dashSource(ctx context.Context, d store.Dashboard, src dash.Sou
 	return run
 }
 
-// errDashStopped is why a refresh was stopped: the user paused or deleted
-// the dashboard.
-var errDashStopped = errors.New("the dashboard was paused or deleted")
+// Why a refresh was stopped: the user paused or deleted the dashboard, or
+// the agent saved a new version of it.
+var (
+	errDashStopped = errors.New("the dashboard was paused or deleted")
+	errDashSaved   = errors.New("the dashboard was saved again")
+)
 
 // stopDashboard stops a dashboard's running refresh, and the commands
-// waiting in it (Codex review of D-067).
-func (e *Engine) stopDashboard(id string) {
+// waiting in it (Codex review of D-067). A pause or delete also stops the
+// refreshes waiting for that one to end.
+func (e *Engine) stopDashboard(id string, why error) {
 	e.dashMu.Lock()
-	stop := e.dashStop[id]
+	cur := e.dashRunning[id]
+	if errors.Is(why, errDashStopped) {
+		e.dashHalts[id]++
+	}
 	e.dashMu.Unlock()
-	if stop != nil {
-		stop(errDashStopped)
+	if cur != nil {
+		cur.stop(why)
 	}
 }
 
@@ -565,8 +627,11 @@ func (e *Engine) execDash(ctx context.Context, d store.Dashboard, src dash.Sourc
 }
 
 func stoppedNote(ctx context.Context) string {
-	if errors.Is(context.Cause(ctx), errDashStopped) {
+	switch why := context.Cause(ctx); {
+	case errors.Is(why, errDashStopped):
 		return "You paused or deleted the dashboard, so CloudBuddy stopped this command."
+	case errors.Is(why, errDashSaved):
+		return "The dashboard was saved again while this ran, so CloudBuddy stopped it and ran the new version."
 	}
 	return "CloudBuddy stopped while this command ran."
 }
@@ -886,9 +951,11 @@ func (e *Engine) dashSave(ctx context.Context, r *Run, toolUseID string, args js
 	e.bus.Publish(bus.Event{Type: "dashboards"})
 
 	// The first refresh runs now, so the agent sees what the page will show.
+	// One already going runs the version from before this save: stop it.
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 	defer cancel()
-	_ = e.RefreshDashboard(rctx, id)
+	e.stopDashboard(id, errDashSaved)
+	_ = e.refresh(rctx, id, refreshChanged)
 	det, err := e.DashboardDetail(ctx, id, "")
 	if err != nil {
 		return DashToolResult{Text: "Saved the dashboard (id " + id + "), but CloudBuddy couldn't read it back: " + err.Error()}
@@ -1086,7 +1153,8 @@ func (e *Engine) dashDetail(ctx context.Context, d store.Dashboard, rangeKey str
 	if err := json.Unmarshal(d.Spec, &spec); err != nil {
 		return dash.Detail{}, err
 	}
-	latest, lastOK, err := e.st.LatestDashboardRuns(ctx, d.ID)
+	revs := spec.SourceRevs(d.Workdir)
+	latest, lastOK, err := e.st.LatestDashboardRuns(ctx, d.ID, revs)
 	if err != nil {
 		return dash.Detail{}, err
 	}
@@ -1107,16 +1175,15 @@ func (e *Engine) dashDetail(ctx context.Context, d store.Dashboard, rangeKey str
 	}
 	rg := dash.RangeFor(rangeKey)
 	now := time.Now()
-	var series []string
-	for k := range spec.Tracked() {
-		series = append(series, k)
+	series := map[string]string{} // series -> its source's revision now
+	for k, sp := range spec.Tracked() {
+		series[k] = revs[sp[0]]
 	}
-	sort.Strings(series)
 	pts, err := e.st.DashboardPoints(ctx, d.ID, series, now.Add(-rg.Span), 120)
 	if err != nil {
 		return dash.Detail{}, err
 	}
-	h := &dashHistory{ctx: ctx, st: e.st, id: d.ID, now: now, points: pts, marks: map[string]store.DashboardMarks{}}
+	h := &dashHistory{ctx: ctx, st: e.st, id: d.ID, now: now, points: pts, revs: series, marks: map[string]store.DashboardMarks{}}
 	values := dash.Values(spec, runs, h, now)
 
 	det := dash.Detail{Workdir: d.Workdir, Range: rg.Key, Tiles: spec.Tiles, Values: values, Choices: dash.RefreshChoices, Ranges: dash.Ranges}
@@ -1189,6 +1256,7 @@ type dashHistory struct {
 	id     string
 	now    time.Time
 	points map[string][]store.DashboardPoint
+	revs   map[string]string // series -> its source's revision now
 	marks  map[string]store.DashboardMarks
 }
 
@@ -1205,7 +1273,7 @@ func (h *dashHistory) mark(series string) store.DashboardMarks {
 	if m, ok := h.marks[series]; ok {
 		return m
 	}
-	m, _ := h.st.DashboardMarks(h.ctx, h.id, series, h.now)
+	m, _ := h.st.DashboardMarks(h.ctx, h.id, series, h.revs[series], h.now)
 	h.marks[series] = m
 	return m
 }
@@ -1233,7 +1301,7 @@ func (e *Engine) SetDashboardSchedule(ctx context.Context, id, refresh string, p
 		return err
 	}
 	if paused {
-		e.stopDashboard(id)
+		e.stopDashboard(id, errDashStopped)
 	}
 	e.bus.Dashboard(id)
 	return nil
@@ -1284,16 +1352,19 @@ func (e *Engine) AllowDashboardSource(ctx context.Context, id, key string, allow
 		return err
 	}
 	e.bus.Dashboard(id)
-	e.RefreshDashboardSoon(id)
+	e.refreshSoon(id, refreshChanged) // one going decided before this answer
 	return nil
 }
 
 // RefreshDashboardSoon starts a refresh in the background.
-func (e *Engine) RefreshDashboardSoon(id string) {
+func (e *Engine) RefreshDashboardSoon(id string) { e.refreshSoon(id, refreshJoin) }
+
+func (e *Engine) refreshSoon(id string, mode refreshMode) {
+	ask := e.askRefresh(id)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
-		_ = e.RefreshDashboard(ctx, id)
+		_ = e.refreshAsked(ctx, id, mode, ask)
 	}()
 }
 
@@ -1304,7 +1375,7 @@ func (e *Engine) DeleteDashboard(ctx context.Context, id string) error {
 	if err := e.st.DeleteDashboard(ctx, id); err != nil {
 		return err
 	}
-	e.stopDashboard(id)
+	e.stopDashboard(id, errDashStopped)
 	e.bus.Publish(bus.Event{Type: "dashboards"})
 	return nil
 }
