@@ -169,3 +169,29 @@ func TestValues(t *testing.T) {
 		t.Errorf("line: %+v", l)
 	}
 }
+
+// A source's revision changes with what its output means, and only that.
+func TestSourceRev(t *testing.T) {
+	base := Source{Key: "n", Label: "N", Command: "cat n.json", Cwd: "sub", Format: "json", TimeoutSeconds: 10}
+	rev := SourceRev("/p", base)
+	for name, c := range map[string]struct {
+		workdir string
+		src     Source
+	}{
+		"workdir": {"/q", base},
+		"command": {"/p", Source{Key: "n", Command: "cat m.json", Cwd: "sub", Format: "json"}},
+		"cwd":     {"/p", Source{Key: "n", Command: "cat n.json", Cwd: "other", Format: "json"}},
+		"format":  {"/p", Source{Key: "n", Command: "cat n.json", Cwd: "sub", Format: "text"}},
+		// the same bytes split differently between the fields
+		"split": {"/p", Source{Key: "n", Command: "cat n.jsonsub", Cwd: "", Format: "json"}},
+	} {
+		if SourceRev(c.workdir, c.src) == rev {
+			t.Errorf("changing the %s kept the revision", name)
+		}
+	}
+	same := base
+	same.Label, same.TimeoutSeconds = "Other label", 60
+	if SourceRev("/p", same) != rev {
+		t.Error("the label or timeout changed the revision")
+	}
+}

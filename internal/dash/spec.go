@@ -5,6 +5,8 @@
 package dash
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -362,6 +364,28 @@ func (s Spec) Tracked() map[string][2]string {
 				out[SeriesKey(se.Source, se.Path)] = [2]string{se.Source, se.Path}
 			}
 		}
+	}
+	return out
+}
+
+// SourceRev names what a source's output means: the dashboard's folder, the
+// command, its folder as saved, and how its output is read. Every run and
+// every tracked number is stored with it, so a source changed under the
+// same key never shows what the old version printed, and its history never
+// mixes the two (Codex review, 2026-11-10). Its label and timeout aren't
+// part of it. Migration 004 computes the same value in SQL for rows stored
+// before it; keep the two the same.
+func SourceRev(workdir string, src Source) string {
+	in := fmt.Sprintf("%d:%s|%d:%s|%d:%s|%s", len(workdir), workdir, len(src.Command), src.Command, len(src.Cwd), src.Cwd, src.Format)
+	sum := sha256.Sum256([]byte(in))
+	return hex.EncodeToString(sum[:8])
+}
+
+// SourceRevs is SourceRev for every source, by key.
+func (s Spec) SourceRevs(workdir string) map[string]string {
+	out := make(map[string]string, len(s.Sources))
+	for _, src := range s.Sources {
+		out[src.Key] = SourceRev(workdir, src)
 	}
 	return out
 }

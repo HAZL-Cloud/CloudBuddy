@@ -59,10 +59,11 @@ type Engine struct {
 
 	// dashboards (D-067, D-068)
 	dashMu      sync.Mutex
-	dashRunning map[string]chan struct{}           // dashboard id -> closed when its refresh ends
-	dashByShim  map[string]*dashExec               // shim token -> the dashboard command it came from
-	dashSaveKey map[string]string                  // run id -> the latest save_dashboard tool call the hook saw
-	dashStop    map[string]context.CancelCauseFunc // dashboard id -> stops its running refresh
+	dashRunning map[string]*dashRefresh // dashboard id -> its running refresh
+	dashSeq     uint64                  // refreshes started so far, numbering each one
+	dashHalts   map[string]uint64       // dashboard id -> times it was paused or deleted
+	dashByShim  map[string]*dashExec    // shim token -> the dashboard command it came from
+	dashSaveKey map[string]string       // run id -> the latest save_dashboard tool call the hook saw
 
 	// ClaudeCanary is true once Phase 2 confirmed SessionStart fires in -p
 	// mode; only then is a missing canary treated as a bypass.
@@ -96,8 +97,7 @@ func New(cfg config.Config, st *store.Store, b *bus.Bus, adapters *recognize.Ada
 		runs:   map[string]*Run{}, active: map[string]*Run{}, waiters: map[string]chan bool{},
 		hints: map[string]recognize.Hints{}, execByToken: map[string]*execState{}, execByShim: map[string]*execState{},
 		execByStep: map[string]*execState{}, stoppedBy: map[string]string{},
-		dashRunning: map[string]chan struct{}{}, dashByShim: map[string]*dashExec{}, dashSaveKey: map[string]string{},
-		dashStop: map[string]context.CancelCauseFunc{}}
+		dashRunning: map[string]*dashRefresh{}, dashHalts: map[string]uint64{}, dashByShim: map[string]*dashExec{}, dashSaveKey: map[string]string{}}
 }
 
 // SetClaude pins the claude program CloudBuddy starts.

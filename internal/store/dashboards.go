@@ -37,15 +37,20 @@ func scanDashboard(row pgx.Row) (Dashboard, error) {
 
 // SaveDashboard creates a dashboard or replaces its definition. A changed
 // definition refreshes right away.
+//
+// A dashboard's schedule (next_run_at, last_run_at) is on this computer's
+// clock, never the database's: the timer compares it with this clock and
+// the page counts down on it, and a database in a VM can be minutes off
+// (Codex review of the fix, 2026-11-10).
 func (s *Store) SaveDashboard(ctx context.Context, d Dashboard) error {
 	if d.Folders == nil {
 		d.Folders = []string{}
 	}
 	_, err := s.db.Exec(ctx, `INSERT INTO dashboards(id,title,description,conversation_id,workdir,folders,refresh_seconds,spec,next_run_at)
-		VALUES ($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,now())
+		VALUES ($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,$9)
 		ON CONFLICT (id) DO UPDATE SET title=$2, description=$3, conversation_id=COALESCE(NULLIF($4,''), dashboards.conversation_id),
-			workdir=$5, folders=$6, refresh_seconds=$7, spec=$8, next_run_at=now(), updated_at=now()`,
-		d.ID, d.Title, d.Description, d.ConversationID, d.Workdir, d.Folders, d.RefreshSeconds, []byte(d.Spec))
+			workdir=$5, folders=$6, refresh_seconds=$7, spec=$8, next_run_at=$9, updated_at=now()`,
+		d.ID, d.Title, d.Description, d.ConversationID, d.Workdir, d.Folders, d.RefreshSeconds, []byte(d.Spec), s.now())
 	return err
 }
 
@@ -79,19 +84,25 @@ func (s *Store) DeleteDashboard(ctx context.Context, id string) error {
 }
 
 // SetDashboardSchedule changes how often a dashboard refreshes, or pauses it.
+// The next refresh is the new interval after the last one began, so a
+// shorter interval can make it due at once and a longer one moves it later
+// (Codex review, 2026-11-10: LEAST kept the old, earlier time). Resuming a
+// paused dashboard refreshes it now.
 func (s *Store) SetDashboardSchedule(ctx context.Context, id string, refreshSeconds int, paused bool) error {
 	tag, err := s.db.Exec(ctx, `UPDATE dashboards SET refresh_seconds=$2, paused=$3,
-		next_run_at = CASE WHEN paused AND NOT $3 THEN now() ELSE LEAST(next_run_at, now() + make_interval(secs => $4)) END,
-		updated_at=now() WHERE id=$1`, id, refreshSeconds, paused, float64(refreshSeconds))
+		next_run_at = CASE WHEN paused AND NOT $3 THEN $5
+			ELSE COALESCE(last_run_at + make_interval(secs => $4), next_run_at) END,
+		updated_at=now() WHERE id=$1`, id, refreshSeconds, paused, float64(refreshSeconds), s.now())
 	if err == nil && tag.RowsAffected() == 0 {
 		err = ErrNotFound
 	}
 	return err
 }
 
-// DueDashboards lists dashboards whose next refresh is due.
-func (s *Store) DueDashboards(ctx context.Context, now time.Time) ([]string, error) {
-	rows, err := s.db.Query(ctx, `SELECT id FROM dashboards WHERE NOT paused AND next_run_at <= $1 ORDER BY next_run_at`, now)
+// DueDashboards lists dashboards whose next refresh is due, on this
+// computer's clock like every schedule time (see SaveDashboard).
+func (s *Store) DueDashboards(ctx context.Context) ([]string, error) {
+	rows, err := s.db.Query(ctx, `SELECT id FROM dashboards WHERE NOT paused AND next_run_at <= $1 ORDER BY next_run_at`, s.now())
 	if err != nil {
 		return nil, err
 	}
@@ -108,9 +119,11 @@ func (s *Store) DueDashboards(ctx context.Context, now time.Time) ([]string, err
 }
 
 // StartDashboardRun moves the next refresh on before a refresh begins, so a
-// slow one isn't started twice.
-func (s *Store) StartDashboardRun(ctx context.Context, id string, next time.Time) error {
-	_, err := s.db.Exec(ctx, `UPDATE dashboards SET next_run_at=$2, last_run_at=now() WHERE id=$1`, id, next)
+// slow one isn't started twice. The interval is read in the same statement,
+// so a schedule change just before can't be undone by an older copy (Codex
+// review of the fix, 2026-11-10).
+func (s *Store) StartDashboardRun(ctx context.Context, id string) error {
+	_, err := s.db.Exec(ctx, `UPDATE dashboards SET next_run_at = $2::timestamptz + make_interval(secs => refresh_seconds), last_run_at=$2 WHERE id=$1`, id, s.now())
 	return err
 }
 
@@ -155,9 +168,11 @@ func (s *Store) KeepDashboardApprovals(ctx context.Context, id string, keys []st
 
 // ---------- runs ----------
 
-// DashboardRun is one run of one command.
+// DashboardRun is one run of one command. SourceRev is dash.SourceRev of
+// the command that ran.
 type DashboardRun struct {
 	SourceKey  string
+	SourceRev  string
 	StartedAt  time.Time
 	DurationMs int
 	State      string
@@ -172,28 +187,32 @@ type DashboardRun struct {
 const keepRuns = 30
 
 func (s *Store) AddDashboardRun(ctx context.Context, id string, r DashboardRun) error {
-	_, err := s.db.Exec(ctx, `INSERT INTO dashboard_runs(dashboard_id,source_key,started_at,duration_ms,state,exit_code,output,truncated,note,exec_digest)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, r.SourceKey, r.StartedAt, r.DurationMs, r.State, r.ExitCode, r.Output, r.Truncated, r.Note, r.ExecDigest)
+	_, err := s.db.Exec(ctx, `INSERT INTO dashboard_runs(dashboard_id,source_key,source_rev,started_at,duration_ms,state,exit_code,output,truncated,note,exec_digest)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, id, r.SourceKey, r.SourceRev, r.StartedAt, r.DurationMs, r.State, r.ExitCode, r.Output, r.Truncated, r.Note, r.ExecDigest)
 	if err != nil {
 		return err
 	}
 	_, err = s.db.Exec(ctx, `DELETE FROM dashboard_runs WHERE dashboard_id=$1 AND source_key=$2 AND id NOT IN
 		(SELECT id FROM dashboard_runs WHERE dashboard_id=$1 AND source_key=$2 ORDER BY id DESC LIMIT $3)
-		AND id NOT IN (SELECT id FROM dashboard_runs WHERE dashboard_id=$1 AND source_key=$2 AND state='ok' ORDER BY id DESC LIMIT 1)`,
-		id, r.SourceKey, keepRuns)
+		AND id NOT IN (SELECT id FROM dashboard_runs WHERE dashboard_id=$1 AND source_key=$2 AND source_rev=$4 AND state='ok' ORDER BY id DESC LIMIT 1)`,
+		id, r.SourceKey, keepRuns, r.SourceRev)
 	return err
 }
 
 // LatestDashboardRuns returns each command's latest run and latest run that
-// worked.
-func (s *Store) LatestDashboardRuns(ctx context.Context, id string) (latest, lastOK map[string]DashboardRun, err error) {
+// worked. revs maps each source key to its dash.SourceRev now: runs of an
+// earlier command under the same key are left out.
+func (s *Store) LatestDashboardRuns(ctx context.Context, id string, revs map[string]string) (latest, lastOK map[string]DashboardRun, err error) {
 	latest, lastOK = map[string]DashboardRun{}, map[string]DashboardRun{}
+	keys, want := pairs(revs)
 	rows, err := s.db.Query(ctx, `
-		(SELECT DISTINCT ON (source_key) 'latest', source_key, started_at, duration_ms, state, exit_code, output, truncated, note, exec_digest
-			FROM dashboard_runs WHERE dashboard_id=$1 ORDER BY source_key, id DESC)
+		(SELECT DISTINCT ON (source_key) 'latest', source_key, source_rev, started_at, duration_ms, state, exit_code, output, truncated, note, exec_digest
+			FROM dashboard_runs JOIN unnest($2::text[], $3::text[]) AS w(source_key, source_rev) USING (source_key, source_rev)
+			WHERE dashboard_id=$1 ORDER BY source_key, id DESC)
 		UNION ALL
-		(SELECT DISTINCT ON (source_key) 'ok', source_key, started_at, duration_ms, state, exit_code, output, truncated, note, exec_digest
-			FROM dashboard_runs WHERE dashboard_id=$1 AND state='ok' ORDER BY source_key, id DESC)`, id)
+		(SELECT DISTINCT ON (source_key) 'ok', source_key, source_rev, started_at, duration_ms, state, exit_code, output, truncated, note, exec_digest
+			FROM dashboard_runs JOIN unnest($2::text[], $3::text[]) AS w(source_key, source_rev) USING (source_key, source_rev)
+			WHERE dashboard_id=$1 AND state='ok' ORDER BY source_key, id DESC)`, id, keys, want)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -201,7 +220,7 @@ func (s *Store) LatestDashboardRuns(ctx context.Context, id string) (latest, las
 	for rows.Next() {
 		var which string
 		var r DashboardRun
-		if err := rows.Scan(&which, &r.SourceKey, &r.StartedAt, &r.DurationMs, &r.State, &r.ExitCode, &r.Output, &r.Truncated, &r.Note, &r.ExecDigest); err != nil {
+		if err := rows.Scan(&which, &r.SourceKey, &r.SourceRev, &r.StartedAt, &r.DurationMs, &r.State, &r.ExitCode, &r.Output, &r.Truncated, &r.Note, &r.ExecDigest); err != nil {
 			return nil, nil, err
 		}
 		if which == "latest" {
@@ -224,20 +243,29 @@ type DashboardPoint struct {
 // historyDays is how long numbers are kept.
 const historyDays = 30
 
-func (s *Store) AddDashboardPoints(ctx context.Context, id string, at time.Time, values map[string]float64) error {
+// DashboardValue is one number a refresh recorded, with dash.SourceRev of
+// the command that printed it.
+type DashboardValue struct {
+	Value     float64
+	SourceRev string
+}
+
+func (s *Store) AddDashboardPoints(ctx context.Context, id string, at time.Time, values map[string]DashboardValue) error {
 	if len(values) == 0 {
 		return nil
 	}
 	batch := &pgx.Batch{}
 	for series, v := range values {
-		batch.Queue(`INSERT INTO dashboard_points(dashboard_id,series,ts,value) VALUES ($1,$2,$3,$4)`, id, series, at, v)
+		batch.Queue(`INSERT INTO dashboard_points(dashboard_id,series,source_rev,ts,value) VALUES ($1,$2,$3,$4,$5)`, id, series, v.SourceRev, at, v.Value)
 	}
 	return s.db.SendBatch(ctx, batch).Close()
 }
 
 // DashboardPoints returns each series' points since a time, averaged into
-// at most n buckets, oldest first.
-func (s *Store) DashboardPoints(ctx context.Context, id string, series []string, since time.Time, n int) (map[string][]DashboardPoint, error) {
+// at most n buckets, oldest first. series maps each series to the
+// dash.SourceRev of its source now: numbers an earlier command printed are
+// left out.
+func (s *Store) DashboardPoints(ctx context.Context, id string, series map[string]string, since time.Time, n int) (map[string][]DashboardPoint, error) {
 	out := map[string][]DashboardPoint{}
 	if len(series) == 0 {
 		return out, nil
@@ -247,9 +275,11 @@ func (s *Store) DashboardPoints(ctx context.Context, id string, series []string,
 	if bucket < time.Second {
 		bucket = time.Second
 	}
-	rows, err := s.db.Query(ctx, `SELECT series, date_bin(make_interval(secs => $4), ts, $3::timestamptz) AS b, max(ts), avg(value)
-		FROM dashboard_points WHERE dashboard_id=$1 AND series = ANY($2) AND ts >= $3
-		GROUP BY series, b ORDER BY series, b`, id, series, since, bucket.Seconds())
+	names, want := pairs(series)
+	rows, err := s.db.Query(ctx, `SELECT series, date_bin(make_interval(secs => $5), ts, $4::timestamptz) AS b, max(ts), avg(value)
+		FROM dashboard_points JOIN unnest($2::text[], $3::text[]) AS w(series, source_rev) USING (series, source_rev)
+		WHERE dashboard_id=$1 AND ts >= $4
+		GROUP BY series, b ORDER BY series, b`, id, names, want, since, bucket.Seconds())
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +305,7 @@ type DashboardMarks struct {
 	Previous *DashboardPoint
 }
 
-func (s *Store) DashboardMarks(ctx context.Context, id, series string, now time.Time) (DashboardMarks, error) {
+func (s *Store) DashboardMarks(ctx context.Context, id, series, rev string, now time.Time) (DashboardMarks, error) {
 	m := DashboardMarks{Before: map[time.Duration]*DashboardPoint{}}
 	one := func(q string, args ...any) (*DashboardPoint, error) {
 		var p DashboardPoint
@@ -289,18 +319,27 @@ func (s *Store) DashboardMarks(ctx context.Context, id, series string, now time.
 		return &p, nil
 	}
 	for _, d := range []time.Duration{time.Hour, 24 * time.Hour, 7 * 24 * time.Hour} {
-		p, err := one(`SELECT ts, value FROM dashboard_points WHERE dashboard_id=$1 AND series=$2 AND ts <= $3 ORDER BY ts DESC LIMIT 1`, id, series, now.Add(-d))
+		p, err := one(`SELECT ts, value FROM dashboard_points WHERE dashboard_id=$1 AND series=$2 AND source_rev=$3 AND ts <= $4 ORDER BY ts DESC LIMIT 1`, id, series, rev, now.Add(-d))
 		if err != nil {
 			return m, err
 		}
 		m.Before[d] = p
 	}
 	var err error
-	if m.Oldest, err = one(`SELECT ts, value FROM dashboard_points WHERE dashboard_id=$1 AND series=$2 ORDER BY ts LIMIT 1`, id, series); err != nil {
+	if m.Oldest, err = one(`SELECT ts, value FROM dashboard_points WHERE dashboard_id=$1 AND series=$2 AND source_rev=$3 ORDER BY ts LIMIT 1`, id, series, rev); err != nil {
 		return m, err
 	}
-	m.Previous, err = one(`SELECT ts, value FROM dashboard_points WHERE dashboard_id=$1 AND series=$2 ORDER BY ts DESC OFFSET 1 LIMIT 1`, id, series)
+	m.Previous, err = one(`SELECT ts, value FROM dashboard_points WHERE dashboard_id=$1 AND series=$2 AND source_rev=$3 ORDER BY ts DESC OFFSET 1 LIMIT 1`, id, series, rev)
 	return m, err
+}
+
+// pairs splits a map into two lists in the same order, for unnest.
+func pairs(m map[string]string) (keys, vals []string) {
+	keys, vals = make([]string, 0, len(m)), make([]string, 0, len(m))
+	for k, v := range m {
+		keys, vals = append(keys, k), append(vals, v)
+	}
+	return keys, vals
 }
 
 // PruneDashboardPoints drops numbers older than the history window.

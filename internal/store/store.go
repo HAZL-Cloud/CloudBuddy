@@ -21,7 +21,20 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
-type Store struct{ db *pgxpool.Pool }
+type Store struct {
+	db *pgxpool.Pool
+	// Now is this computer's clock, for times compared with it (a
+	// dashboard's schedule). Tests set it to a clock that differs from the
+	// database's.
+	Now func() time.Time
+}
+
+func (s *Store) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
 
 var ErrNotPending = errors.New("not_pending")
 var ErrNotFound = errors.New("not_found")
