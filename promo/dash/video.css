@@ -1,0 +1,9 @@
+/* The Dashboards demo: what it adds to ../video.css. */
+.hook-title{position:absolute;left:0;right:0;top:210px;text-align:center;font:700 72px/1.08 var(--display);letter-spacing:-.03em}
+.hook-title .c{color:var(--coral)}
+.morning{position:absolute;left:330px;display:flex;align-items:center;gap:36px}
+.morning .day{width:200px;text-align:right;font:500 30px var(--mono);color:var(--ink-3)}
+.morning .bubble{padding:20px 34px;border-radius:22px 22px 6px 22px;background:#1C2C55;color:var(--ink);font:500 40px var(--body);letter-spacing:-.005em;box-shadow:0 20px 50px -24px #000}
+.morning .agent{position:absolute;left:236px;top:100px;font:400 24px var(--mono);color:var(--dim);white-space:nowrap}
+.morning .agent b{color:var(--ink-3);font-weight:500}
+.kicker{position:absolute;left:50%;top:214px;transform:translateX(-50%);padding:10px 24px;border:1px solid rgba(79,209,178,.45);border-radius:999px;background:rgba(79,209,178,.08);color:var(--teal);font:600 30px var(--display);letter-spacing:.01em;white-space:nowrap}

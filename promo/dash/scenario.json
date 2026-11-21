@@ -1,0 +1,136 @@
+{
+  "model": "demo-replay",
+  "steps": [
+    {
+      "say": "I'll look at the shop's database first, read-only."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "sqlite3 -readonly -safe shop.db \"select count(*) from users\"",
+        "description": "Count the users"
+      },
+      "output": "1204"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "sqlite3 -readonly -safe -json shop.db \"select plan, count(*) as users from users group by plan order by users desc\"",
+        "description": "Count users by plan"
+      },
+      "output": "[{\"plan\":\"free\",\"users\":1117},\n{\"plan\":\"pro\",\"users\":79},\n{\"plan\":\"team\",\"users\":8}]"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "sqlite3 -readonly -safe -json shop.db \"select * from (select date(created_at) as day, count(*) as signups from users group by 1 order by 1 desc limit 7) order by day\"",
+        "description": "Count signups per day"
+      },
+      "output": "[{\"day\":\"…\",\"signups\":14}, …]"
+    },
+    {
+      "say": "The numbers look right. I'll save a dashboard that CloudBuddy keeps fresh."
+    },
+    {
+      "tool": "mcp__cloudbuddy__save_dashboard",
+      "input": {
+        "title": "Shop pulse",
+        "description": "Users, paying customers, revenue and the API, refreshed every 15 minutes.",
+        "refresh": "15m",
+        "sources": [
+          {
+            "key": "users",
+            "label": "All users",
+            "command": "sqlite3 -readonly -safe shop.db \"select count(*) from users\""
+          },
+          {
+            "key": "paying",
+            "label": "Paying customers",
+            "command": "sqlite3 -readonly -safe shop.db \"select count(*) from users where plan != 'free'\""
+          },
+          {
+            "key": "mrr",
+            "label": "Monthly revenue",
+            "command": "node scripts/mrr.js"
+          },
+          {
+            "key": "health",
+            "label": "API health",
+            "command": "cat status/api.json",
+            "format": "json"
+          },
+          {
+            "key": "daily",
+            "label": "Signups per day",
+            "command": "sqlite3 -readonly -safe -json shop.db \"select * from (select date(created_at) as day, count(*) as signups from users group by 1 order by 1 desc limit 7) order by day\"",
+            "format": "json"
+          },
+          {
+            "key": "plans",
+            "label": "Users by plan",
+            "command": "sqlite3 -readonly -safe -json shop.db \"select plan, count(*) as users from users group by plan order by users desc\"",
+            "format": "json"
+          }
+        ],
+        "tiles": [
+          {
+            "type": "number",
+            "title": "Users",
+            "source": "users",
+            "unit": "users",
+            "good": "up",
+            "compare": "24h"
+          },
+          {
+            "type": "number",
+            "title": "Paying customers",
+            "source": "paying",
+            "good": "up",
+            "compare": "7d"
+          },
+          {
+            "type": "number",
+            "title": "Monthly revenue",
+            "source": "mrr",
+            "format": "currency",
+            "currency": "USD",
+            "good": "up"
+          },
+          {
+            "type": "status",
+            "title": "API",
+            "source": "health",
+            "path": "state",
+            "okValues": [
+              "healthy"
+            ]
+          },
+          {
+            "type": "line",
+            "title": "Users over time",
+            "source": "users",
+            "width": 2
+          },
+          {
+            "type": "bars",
+            "title": "Signups per day",
+            "source": "daily",
+            "labelField": "day",
+            "valueField": "signups",
+            "width": 2
+          },
+          {
+            "type": "table",
+            "title": "Users by plan",
+            "source": "plans",
+            "width": 4
+          }
+        ]
+      },
+      "output": "Saved."
+    },
+    {
+      "say": "Saved **Shop pulse**. CloudBuddy refreshes it every 15 minutes on its own. The revenue script waits for your OK once, because CloudBuddy can't see what a script does inside."
+    }
+  ]
+}
