@@ -1,6 +1,13 @@
 /* Reset, shared bits, and the three-panel grid. */
 *,*::before,*::after{box-sizing:border-box}
 html,body,#root{height:100%}
+/* The app never scrolls as a page; its panels scroll. body's overflow:hidden
+   moves to the window, which still scrolls from code, and an absolutely
+   placed element with no placed parent (a .sr-only table caption far down a
+   panel) made the page taller than the window, so scrollIntoView shifted the
+   whole app up. #root contains and clips such elements; clip, unlike hidden,
+   can't be scrolled at all. */
+#root{position:relative;overflow:clip}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.45;overflow:hidden;-webkit-font-smoothing:antialiased}
 button,select{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}

@@ -36,8 +36,11 @@ type Point struct {
 type History interface {
 	// Points are the series' points in the page's time range, oldest first.
 	Points(series string) []Point
-	// Before is the latest point at least d old.
-	Before(series string, d time.Duration) *Point
+	// Before is the latest point at least d older than at: the time of the
+	// value the tile shows, which is older than now when the last refresh
+	// failed. Counting from now compared an old value with itself ("No
+	// change in 7 days" on a number that stopped refreshing 10 days ago).
+	Before(series string, at time.Time, d time.Duration) *Point
 	// Oldest is the series' first point.
 	Oldest(series string) *Point
 	// Previous is the point before the latest one.
@@ -65,8 +68,12 @@ type TileValue struct {
 	// ok | pending | waiting | blocked | declined | error
 	State string `json:"state"`
 	// Message explains a state other than ok, or that the value is old.
-	Message   string           `json:"message,omitempty"`
-	Stale     bool             `json:"stale,omitempty"`
+	Message string `json:"message,omitempty"`
+	// Stale: the latest run failed; the value is from the last that worked.
+	Stale bool `json:"stale,omitempty"`
+	// Waiting: a line chart shows its history while a command for it waits
+	// for the user's OK.
+	Waiting   bool             `json:"waiting,omitempty"`
 	UpdatedAt *time.Time       `json:"updatedAt,omitempty"`
 	Number    *float64         `json:"number,omitempty"`
 	Compare   *Compared        `json:"compare,omitempty"`
@@ -76,8 +83,11 @@ type TileValue struct {
 	Rows      []map[string]any `json:"rows,omitempty"`
 	Columns   []Column         `json:"columns,omitempty"`
 	More      int              `json:"more,omitempty"`
-	Text      string           `json:"text,omitempty"`
-	Status    string           `json:"status,omitempty"` // ok | warn | fail
+	// OldestFirst: the bars are dates, oldest first. The newest are at the
+	// end, and any left out (More) are the earliest.
+	OldestFirst bool   `json:"oldestFirst,omitempty"`
+	Text        string `json:"text,omitempty"`
+	Status      string `json:"status,omitempty"` // ok | warn | fail
 }
 
 // Runs are a source's latest run and its latest run that worked.
@@ -104,6 +114,9 @@ func sourceValue(spec Spec, key, path string, runs map[string]Runs, tv *TileValu
 		tv.State, tv.Message = "pending", "Not fetched yet."
 		return nil, nil, false
 	}
+	// A command waiting for an OK shows nothing, even when an earlier version
+	// of its files printed something: the changed script's numbers may mean
+	// something else.
 	switch r.Latest.State {
 	case RunWaiting:
 		tv.State, tv.Message = "waiting", "CloudBuddy runs this tile's command once you allow it."
@@ -132,11 +145,12 @@ func sourceValue(spec Spec, key, path string, runs map[string]Runs, tv *TileValu
 		return nil, nil, false
 	}
 	v, err := Parse(use.Output, src.Format)
-	if err == nil {
-		v, err = Lookup(v, path)
-	}
 	if err != nil {
 		tv.State, tv.Message = "error", "CloudBuddy couldn't read the output: "+err.Error()
+		return nil, nil, false
+	}
+	if v, err = Lookup(v, path); err != nil {
+		tv.State, tv.Message = "error", "CloudBuddy couldn't find this tile's value in the output: "+err.Error()
 		return nil, nil, false
 	}
 	return v, use, true
@@ -188,20 +202,14 @@ func tileValue(spec Spec, t Tile, runs map[string]Runs, h History, now time.Time
 		if err != nil {
 			return errorTile(tv, "CloudBuddy couldn't draw a line from the output: "+err.Error())
 		}
-		tv.Series = []SeriesValue{{Label: t.Title, Bars: limitBars(bars, t.Limit, 200)}}
+		kept, _, _ := limitBars(bars, t.Limit, 200)
+		tv.Series = []SeriesValue{{Label: t.Title, Bars: kept}}
 	case "bars":
 		bars, err := Bars(v, t.LabelField, t.ValueField)
 		if err != nil {
 			return errorTile(tv, "CloudBuddy couldn't draw bars from the output: "+err.Error())
 		}
-		limit := t.Limit
-		if limit == 0 {
-			limit = 20
-		}
-		if len(bars) > limit {
-			tv.More = len(bars) - limit
-		}
-		tv.Bars = limitBars(bars, limit, limit)
+		tv.Bars, tv.More, tv.OldestFirst = limitBars(bars, t.Limit, defaultBars)
 	case "table":
 		rows, cols, err := Rows(v)
 		if err != nil {
@@ -243,14 +251,77 @@ func errorTile(tv TileValue, msg string) TileValue {
 	return tv
 }
 
-func limitBars(b []Bar, limit, def int) []Bar {
+// defaultBars is how many bars a bars tile shows unless it sets a limit: a
+// month of days. Longer lists scroll inside the tile.
+const defaultBars = 31
+
+// limitBars keeps at most limit bars (def when limit is 0), says how many it
+// left out, and whether the bars are dates, oldest first. Most lists keep
+// their first bars: a top-ten sorted by value, or days newest first. Days
+// oldest first keep their last bars instead, so the newest days show and the
+// oldest are the ones left out (2026-11-24: a 30-day chart showed its 20
+// oldest days).
+func limitBars(b []Bar, limit, def int) (kept []Bar, more int, oldestFirst bool) {
 	if limit == 0 {
 		limit = def
 	}
-	if len(b) > limit {
-		return b[:limit]
+	labels := make([]string, len(b))
+	for i, x := range b {
+		labels[i] = x.Label
 	}
-	return b
+	oldestFirst = datesInOrder(labels)
+	switch {
+	case len(b) <= limit:
+		return b, 0, oldestFirst
+	case oldestFirst:
+		return b[len(b)-limit:], len(b) - limit, true
+	}
+	return b[:limit], len(b) - limit, false
+}
+
+// dateLayouts are the ways commands write a day or a time on a label.
+var dateLayouts = []string{
+	time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02 15:04",
+	"2006-01-02", "2006/01/02", "2006-01",
+	"Jan 2, 2006", "2 Jan 2006", "Jan 2006", "January 2006",
+	"Jan 2", "2 Jan", "January 2", "2 January", "Mon Jan 2", "Mon, Jan 2",
+}
+
+// datesInOrder says whether every label is a date in one layout, oldest
+// first. Dates without a year may pass from December to January once a
+// year.
+func datesInOrder(labels []string) bool {
+	if len(labels) < 2 {
+		return false
+	}
+	for _, layout := range dateLayouts {
+		var prev time.Time
+		years, ok := 0, true
+		for i, l := range labels {
+			t, err := time.Parse(layout, strings.TrimSpace(l))
+			if err != nil {
+				ok = false
+				break
+			}
+			t = t.AddDate(years, 0, 0)
+			if i > 0 && t.Before(prev) {
+				if t.Year() == years && prev.Month() == time.December && t.Month() == time.January {
+					years++ // no year in the label: the new year began
+					t = t.AddDate(1, 0, 0)
+				} else {
+					ok = false
+					break
+				}
+			}
+			prev = t
+		}
+		if ok {
+			// the same date over and over isn't a series in time
+			first, _ := time.Parse(layout, strings.TrimSpace(labels[0]))
+			return prev.After(first)
+		}
+	}
+	return false
 }
 
 func lineSeries(t Tile, runs map[string]Runs, h History, in TileValue) (tv TileValue) {
@@ -276,7 +347,7 @@ func lineSeries(t Tile, runs map[string]Runs, h History, in TileValue) (tv TileV
 			switch {
 			case firstState != "":
 			case r.Latest.State == RunWaiting:
-				tv.Message, tv.Stale, firstState = "A command for this chart is waiting for your OK.", false, "waiting"
+				tv.Message, tv.Stale, tv.Waiting, firstState = "A command for this chart is waiting for your OK.", false, true, "waiting"
 			case r.Latest.State == RunBlocked:
 				tv.Message, tv.Stale, firstState = r.Latest.Note, false, "blocked"
 			case r.Latest.State == RunDeclined:
@@ -363,17 +434,17 @@ func compareWith(mode, series string, h History, latestAt time.Time) *Compared {
 		}
 		return nil
 	case "1h":
-		if p := h.Before(series, time.Hour); p != nil {
+		if p := h.Before(series, latestAt, time.Hour); p != nil {
 			return &Compared{Value: p.V, At: p.T, Label: "in the last hour"}
 		}
 		return nil
 	case "7d":
-		if p := h.Before(series, 7*24*time.Hour); p != nil {
+		if p := h.Before(series, latestAt, 7*24*time.Hour); p != nil {
 			return &Compared{Value: p.V, At: p.T, Label: "in 7 days"}
 		}
 		return nil
 	}
-	if p := h.Before(series, 24*time.Hour); p != nil {
+	if p := h.Before(series, latestAt, 24*time.Hour); p != nil {
 		return &Compared{Value: p.V, At: p.T, Label: "in 24 hours"}
 	}
 	// a younger dashboard: since its first number, once there is some history

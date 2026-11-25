@@ -64,6 +64,14 @@
 .dash-cwd{font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere}
 .dash-why{margin:0;font-size:12.5px;color:var(--ink-2);line-height:1.45}
 
+/* commands that failed on the last refresh */
+.dash-alert{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--line);border-left:3px solid var(--delete);border-radius:12px;background:var(--card);padding:12px 16px;color:var(--delete)}
+.dash-alert b{color:var(--ink);font-size:14px}
+.dash-alert p{margin:4px 0 0;color:var(--ink-2);font-size:13px;line-height:1.45}
+.dash-alert code{font:12px/1.45 var(--f-mono);color:var(--ink);overflow-wrap:anywhere}
+.dash-alert ul{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--ink-2)}
+.dash-alert li strong{color:var(--ink);font-weight:600}
+
 /* filters: one row above the tiles */
 .dash-filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .dash-filters-k{font-size:12.5px;color:var(--ink-3)}
@@ -82,6 +90,8 @@
 .tile-body{flex:1;min-width:0;padding:8px 14px 12px;display:flex;flex-direction:column;gap:6px}
 .tile-foot{display:flex;flex-wrap:wrap;gap:4px 12px;padding:0 14px 11px;font-size:11.5px;color:var(--ink-3)}
 .tile-when{margin-left:auto}
+.tile-when.old{color:var(--ink-2)}
+.tile-warn .btn.link{font-size:11.5px}
 .tile-warn{display:inline-flex;align-items:center;gap:4px;color:var(--change)}
 .tile.stale .tile-body{opacity:.75}
 .tile-empty{margin:0;color:var(--ink-3);font-size:12.5px;line-height:1.45}
@@ -117,8 +127,10 @@
 .status-label{font:600 22px/1.1 var(--f-body);color:var(--ink)}
 .status-value{font-size:12.5px;color:var(--ink-2);overflow-wrap:anywhere}
 
-/* charts */
-.chart{position:relative;width:100%}
+/* charts: the plot fills the tile, so a chart beside a taller tile leaves no empty space */
+.chart{position:relative;width:100%;flex:1 1 auto;display:flex;flex-direction:column;min-height:0}
+.chart-plot{position:relative;flex:1 1 auto;min-height:190px}
+.chart-plot svg{position:absolute;top:0;left:0}
 .chart svg{display:block;overflow:visible}
 .chart svg:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:4px}
 .chart .grid{stroke:var(--chart-grid);stroke-width:1;shape-rendering:crispEdges}
@@ -127,7 +139,8 @@
 .chart .line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
 .chart .area{stroke:none;opacity:.1}
 .chart .dot{stroke:var(--card);stroke-width:2}
-.chart .end-label{font:600 12px var(--f-body);fill:var(--ink)}
+/* a halo in the card's colour keeps the last value readable over the line */
+.chart .end-label{font:600 12px var(--f-body);fill:var(--ink);paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round}
 .chart .crosshair{stroke:var(--ink-3);stroke-width:1}
 .chart .hit{fill:transparent;cursor:crosshair}
 .s1{--c:var(--s1)} .s2{--c:var(--s2)} .s3{--c:var(--s3)} .s4{--c:var(--s4)} .s5{--c:var(--s5)} .s6{--c:var(--s6)}
@@ -142,7 +155,10 @@
 .tip-row b{color:var(--ink);font-weight:600}
 
 /* bars: thin, 4px rounded at the value end, square at the baseline, value at the tip */
-.bars{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.bars{list-style:none;margin:0;padding:0 2px 0 0;display:flex;flex-direction:column;gap:6px;max-height:380px;overflow-y:auto}
+.bars.dense{gap:4px}
+.bars.dense li{font-size:12px}
+.bars.dense .bar-track{height:12px}
 .bars li{display:grid;grid-template-columns:minmax(60px,32%) minmax(0,1fr) auto;align-items:center;gap:10px;font-size:12.5px}
 .bars li:hover .bar-fill{filter:brightness(1.12)}
 .bar-label{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -155,7 +171,9 @@
 .dtable-wrap{overflow:auto;max-height:340px}
 .dtable{width:100%;border-collapse:collapse;font-size:12.5px}
 .dtable th{position:sticky;top:0;background:var(--card);text-align:left;font-weight:600;color:var(--ink-3);padding:6px 10px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap}
-.dtable td{padding:6px 10px 6px 0;border-bottom:1px solid var(--line-soft);color:var(--ink);overflow-wrap:anywhere}
+/* break-word, not anywhere: in a table, anywhere lets a column shrink to one
+   letter, so "unsubscribed" broke mid-word; a wide table scrolls instead */
+.dtable td{padding:6px 10px 6px 0;border-bottom:1px solid var(--line-soft);color:var(--ink);overflow-wrap:break-word}
 .dtable td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .dtable tr:last-child td{border-bottom:0}
 .dtable-more{font-size:11.5px;color:var(--ink-3);padding-top:6px}

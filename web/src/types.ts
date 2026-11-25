@@ -218,7 +218,10 @@ export interface TileValue {
   key: string
   state: TileState
   message?: string
+  /** The latest run failed: the value is from the last run that worked. */
   stale?: boolean
+  /** A line chart shows its history while a command for it waits for the user's OK. */
+  waiting?: boolean
   updatedAt?: string
   number?: number
   compare?: { value: number; at: string; label: string }
@@ -228,6 +231,8 @@ export interface TileValue {
   rows?: Record<string, unknown>[]
   columns?: TileColumn[]
   more?: number
+  /** bars: dates, oldest first. The list opens at the newest end, and any left out (more) are the earliest. */
+  oldestFirst?: boolean
   text?: string
   status?: 'ok' | 'warn' | 'fail'
 }

@@ -130,14 +130,17 @@ func (s *Store) StartDashboardRun(ctx context.Context, id string) error {
 // ---------- approvals ----------
 
 // DashboardApproval is the user's answer for one command that isn't a read.
+// ExecDigest is the version of the files it runs that they answered for;
+// OKDigests are every version they allowed, ExecDigest last (migration 005).
 type DashboardApproval struct {
 	SourceKey, Command, Cwd, ExecDigest string
 	Allowed                             bool
+	OKDigests                           []string
 	DecidedAt                           time.Time
 }
 
 func (s *Store) DashboardApprovals(ctx context.Context, id string) (map[string]DashboardApproval, error) {
-	rows, err := s.db.Query(ctx, `SELECT source_key, command, cwd, exec_digest, allowed, decided_at FROM dashboard_approvals WHERE dashboard_id=$1`, id)
+	rows, err := s.db.Query(ctx, `SELECT source_key, command, cwd, exec_digest, allowed, ok_digests, decided_at FROM dashboard_approvals WHERE dashboard_id=$1`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +148,7 @@ func (s *Store) DashboardApprovals(ctx context.Context, id string) (map[string]D
 	out := map[string]DashboardApproval{}
 	for rows.Next() {
 		var a DashboardApproval
-		if err := rows.Scan(&a.SourceKey, &a.Command, &a.Cwd, &a.ExecDigest, &a.Allowed, &a.DecidedAt); err != nil {
+		if err := rows.Scan(&a.SourceKey, &a.Command, &a.Cwd, &a.ExecDigest, &a.Allowed, &a.OKDigests, &a.DecidedAt); err != nil {
 			return nil, err
 		}
 		out[a.SourceKey] = a
@@ -153,11 +156,46 @@ func (s *Store) DashboardApprovals(ctx context.Context, id string) (map[string]D
 	return out, rows.Err()
 }
 
+// keepOKs is how many versions of a command's files its OKs are kept for.
+const keepOKs = 20
+
+// SetDashboardApproval records the user's answer. An OK adds this version
+// of the files to the ones allowed before for the same command and folder,
+// so going back to one of them (a git checkout) needs no new answer; a
+// "no" forgets them all. a.OKDigests is ignored.
 func (s *Store) SetDashboardApproval(ctx context.Context, id string, a DashboardApproval) error {
-	_, err := s.db.Exec(ctx, `INSERT INTO dashboard_approvals(dashboard_id,source_key,command,cwd,exec_digest,allowed) VALUES ($1,$2,$3,$4,$5,$6)
-		ON CONFLICT (dashboard_id, source_key) DO UPDATE SET command=$3, cwd=$4, exec_digest=$5, allowed=$6, decided_at=now()`,
-		id, a.SourceKey, a.Command, a.Cwd, a.ExecDigest, a.Allowed)
-	return err
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var prev DashboardApproval
+	err = tx.QueryRow(ctx, `SELECT command, cwd, allowed, ok_digests FROM dashboard_approvals WHERE dashboard_id=$1 AND source_key=$2 FOR UPDATE`,
+		id, a.SourceKey).Scan(&prev.Command, &prev.Cwd, &prev.Allowed, &prev.OKDigests)
+	found := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	ok := []string{}
+	if a.Allowed {
+		if found && prev.Allowed && prev.Command == a.Command && prev.Cwd == a.Cwd {
+			for _, d := range prev.OKDigests {
+				if d != a.ExecDigest {
+					ok = append(ok, d)
+				}
+			}
+		}
+		ok = append(ok, a.ExecDigest)
+		if len(ok) > keepOKs {
+			ok = ok[len(ok)-keepOKs:]
+		}
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO dashboard_approvals(dashboard_id,source_key,command,cwd,exec_digest,allowed,ok_digests) VALUES ($1,$2,$3,$4,$5,$6,$7)
+		ON CONFLICT (dashboard_id, source_key) DO UPDATE SET command=$3, cwd=$4, exec_digest=$5, allowed=$6, ok_digests=$7, decided_at=now()`,
+		id, a.SourceKey, a.Command, a.Cwd, a.ExecDigest, a.Allowed, ok); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // KeepDashboardApprovals forgets answers for commands no longer in the dashboard.
@@ -296,41 +334,40 @@ func (s *Store) DashboardPoints(ctx context.Context, id string, series map[strin
 	return out, rows.Err()
 }
 
-// DashboardMarks are the points a number tile compares against: the latest
-// point at least 1 hour, 24 hours and 7 days old, the oldest, and the one
-// before the latest.
+// DashboardMarks are points a number tile compares against: the oldest,
+// and the one before the latest. DashboardPointAt finds the one at an age.
 type DashboardMarks struct {
-	Before   map[time.Duration]*DashboardPoint
 	Oldest   *DashboardPoint
 	Previous *DashboardPoint
 }
 
-func (s *Store) DashboardMarks(ctx context.Context, id, series, rev string, now time.Time) (DashboardMarks, error) {
-	m := DashboardMarks{Before: map[time.Duration]*DashboardPoint{}}
-	one := func(q string, args ...any) (*DashboardPoint, error) {
-		var p DashboardPoint
-		err := s.db.QueryRow(ctx, q, args...).Scan(&p.T, &p.V)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		return &p, nil
+func (s *Store) dashboardPoint(ctx context.Context, q string, args ...any) (*DashboardPoint, error) {
+	var p DashboardPoint
+	err := s.db.QueryRow(ctx, q, args...).Scan(&p.T, &p.V)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
 	}
-	for _, d := range []time.Duration{time.Hour, 24 * time.Hour, 7 * 24 * time.Hour} {
-		p, err := one(`SELECT ts, value FROM dashboard_points WHERE dashboard_id=$1 AND series=$2 AND source_rev=$3 AND ts <= $4 ORDER BY ts DESC LIMIT 1`, id, series, rev, now.Add(-d))
-		if err != nil {
-			return m, err
-		}
-		m.Before[d] = p
+	if err != nil {
+		return nil, err
 	}
+	return &p, nil
+}
+
+func (s *Store) DashboardMarks(ctx context.Context, id, series, rev string) (DashboardMarks, error) {
+	var m DashboardMarks
 	var err error
-	if m.Oldest, err = one(`SELECT ts, value FROM dashboard_points WHERE dashboard_id=$1 AND series=$2 AND source_rev=$3 ORDER BY ts LIMIT 1`, id, series, rev); err != nil {
+	if m.Oldest, err = s.dashboardPoint(ctx, `SELECT ts, value FROM dashboard_points WHERE dashboard_id=$1 AND series=$2 AND source_rev=$3 ORDER BY ts LIMIT 1`, id, series, rev); err != nil {
 		return m, err
 	}
-	m.Previous, err = one(`SELECT ts, value FROM dashboard_points WHERE dashboard_id=$1 AND series=$2 AND source_rev=$3 ORDER BY ts DESC OFFSET 1 LIMIT 1`, id, series, rev)
+	m.Previous, err = s.dashboardPoint(ctx, `SELECT ts, value FROM dashboard_points WHERE dashboard_id=$1 AND series=$2 AND source_rev=$3 ORDER BY ts DESC OFFSET 1 LIMIT 1`, id, series, rev)
 	return m, err
+}
+
+// DashboardPointAt is the series' latest point at or before t: with t an
+// hour, a day or a week before the value a tile shows, what it compares
+// that value with.
+func (s *Store) DashboardPointAt(ctx context.Context, id, series, rev string, t time.Time) (*DashboardPoint, error) {
+	return s.dashboardPoint(ctx, `SELECT ts, value FROM dashboard_points WHERE dashboard_id=$1 AND series=$2 AND source_rev=$3 AND ts <= $4 ORDER BY ts DESC LIMIT 1`, id, series, rev, t)
 }
 
 // pairs splits a map into two lists in the same order, for unnest.

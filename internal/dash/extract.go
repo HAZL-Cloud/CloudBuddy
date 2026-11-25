@@ -217,7 +217,11 @@ func Lookup(v any, path string) (any, error) {
 			}
 			n, err := strconv.Atoi(part)
 			if err != nil {
-				return nil, fmt.Errorf("%q: the output has a list there, so use a number, length, first or last", strings.Join(parts[:i+1], "."))
+				where := "the output is a list"
+				if i > 0 {
+					where = fmt.Sprintf("%q is a list", strings.Join(parts[:i], "."))
+				}
+				return nil, fmt.Errorf("%q: %s, not an object with %q in it; use a position (0, 1, …), first, last or length", strings.Join(parts[:i+1], "."), where, part)
 			}
 			if n < 0 {
 				n += len(t)

@@ -189,3 +189,54 @@ export function untilLabel(iso: string | undefined, now: Date = new Date()): str
   if (h < 48) return `in ${h} h`
   return `in ${Math.round(h / 24)} days`
 }
+
+/** A chart category on an axis: a plain date ("2026-10-16") as "Oct 16" ("Oct 16, 2026" long); anything else as it is. */
+export function categoryLabel(s: string, long = false): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  const month = m ? MONTHS[Number(m[2]) - 1] : undefined
+  if (!m || !month) return s
+  const day = `${month} ${Number(m[3])}`
+  return long ? `${day}, ${m[1]}` : day
+}
+
+/**
+ * Where to draw x-axis labels: always the first and the last point, and as
+ * many evenly spaced between as fit with `gap` pixels between labels. Each
+ * label is centred on its point but kept inside [left, right]. Returns each
+ * drawn label's point index and its left edge.
+ */
+export function placeLabels(xs: number[], widths: number[], left: number, right: number, gap = 12): { i: number; x: number }[] {
+  const n = xs.length
+  if (n === 0) return []
+  const box = (i: number) => {
+    const w = widths[i] ?? 0
+    return Math.max(left, Math.min((xs[i] ?? 0) - w / 2, right - w))
+  }
+  if (n === 1) return [{ i: 0, x: box(0) }]
+  const avg = widths.reduce((a, b) => a + b, 0) / n
+  for (let k = Math.min(n, Math.floor((right - left + gap) / (avg + gap))); k >= 2; k--) {
+    const picked = Array.from({ length: k }, (_, j) => Math.round((j * (n - 1)) / (k - 1)))
+    const placed = picked.map((i) => ({ i, x: box(i) }))
+    const fits = placed.every((p, j) => j === 0 || p.x - ((placed[j - 1] as { x: number }).x + (widths[(placed[j - 1] as { i: number }).i] ?? 0)) >= gap)
+    if (fits) return placed
+  }
+  return [{ i: 0, x: box(0) }]
+}
+
+/**
+ * The line of a failed command's error output that says the most: one that
+ * starts with "Error"/"[ERROR]"/"fatal", else one that names a failure (not
+ * a stack frame), else the last line.
+ */
+export function errorLine(note: string, max = 200): string {
+  const lines = note
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+  const head = lines.find((l) => /^(✘\s*)?\[?(error|fatal)\]?\b/i.test(l) && /\w/.test(l.replace(/^(✘\s*)?\[?(error|fatal)\]?:?/i, '')))
+  const said = lines.find(
+    (l) => !l.startsWith('at ') && !/new Error\(/.test(l) && /\b(error|failed|denied|expired|refused|not found|no such|permission|timed out)\b/i.test(l),
+  )
+  const line = head ?? said ?? lines[lines.length - 1] ?? ''
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line
+}

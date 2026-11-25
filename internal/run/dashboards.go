@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -381,7 +382,8 @@ func (e *Engine) stopDashboard(id string, why error) {
 }
 
 // dashApproved checks, right when it is used, that the user's OK covers this
-// exact command, folder and files. It returns the run state when it doesn't.
+// exact command, folder and files: the version they allowed last, or one
+// they allowed before. It returns the run state when it doesn't.
 func (e *Engine) dashApproved(ctx context.Context, d store.Dashboard, src dash.Source, cwd string, env map[string]string, class dash.Class) (string, string) {
 	all, err := e.st.DashboardApprovals(ctx, d.ID)
 	if err != nil {
@@ -394,7 +396,9 @@ func (e *Engine) dashApproved(ctx context.Context, d store.Dashboard, src dash.S
 	if !a.Allowed {
 		return dash.RunDeclined, class.Reason
 	}
-	if a.ExecDigest != dashDigest(src.Command, cwd, env, dashRun(d, env).projectFolders()) {
+	// any version of the files the user allowed, not only the latest: a
+	// git checkout can bring back one they allowed before
+	if digest := dashDigest(src.Command, cwd, env, dashRun(d, env).projectFolders()); digest != a.ExecDigest && !slices.Contains(a.OKDigests, digest) {
 		return dash.RunWaiting, "The files this command runs changed after you allowed it, so it needs your OK again. " + class.Reason
 	}
 	return "", ""
@@ -487,9 +491,25 @@ func dashDigest(command, cwd string, env map[string]string, folders []string) st
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// dashAgentEnv is how Claude Code marks the commands it runs as an agent's.
+// The agent tries each command in the chat before it saves a dashboard and
+// writes each tile's path from what it saw there, so the timer runs the
+// commands with the same marks: some CLIs print something else for an
+// agent. The Supabase CLI wraps query results in {"warning": …, "rows":
+// [...]} for an agent and prints the bare list otherwise, so tiles built on
+// "rows.0.accounts" broke on the timer (2026-11-24). Only Claude chats get
+// the dashboard tools (engine.go).
+var dashAgentEnv = map[string]string{"CLAUDECODE": "1", "AI_AGENT": "claude-code"}
+
+// inheritedAgentMarks are dropped from the environment CloudBuddy captured
+// before dashAgentEnv is added, as agent.baseEnv drops them before an agent
+// starts: CloudBuddy started from an agent's terminal has them too.
+var inheritedAgentMarks = map[string]bool{"CLAUDECODE": true, "CLAUDE_CODE_ENTRYPOINT": true, "CLAUDE_CODE_SSE_PORT": true, "AI_AGENT": true}
+
 // execDash runs one allowed command, the way cloudbuddy exec runs a chat's
 // commands: zsh -f under the same sandbox profile, in a process group that
-// is killed when it ends or runs too long.
+// is killed when it ends or runs too long, with the marks Claude Code gives
+// the commands it runs (dashAgentEnv).
 func (e *Engine) execDash(ctx context.Context, d store.Dashboard, src dash.Source, cwd string, base map[string]string, class dash.Class, run *store.DashboardRun) {
 	select {
 	case dashSlots <- struct{}{}:
@@ -517,9 +537,12 @@ func (e *Engine) execDash(ctx context.Context, d store.Dashboard, src dash.Sourc
 
 	env := make(map[string]string, len(base)+10)
 	for k, v := range base {
-		if !strings.HasPrefix(k, "CB_") {
+		if !strings.HasPrefix(k, "CB_") && !inheritedAgentMarks[k] {
 			env[k] = v
 		}
+	}
+	for k, v := range dashAgentEnv {
+		env[k] = v
 	}
 	// no pagers or colours: a pager is a program the CLI would start
 	env["AWS_PAGER"], env["PAGER"], env["GIT_PAGER"], env["PSQL_PAGER"] = "", "cat", "cat", "cat"
@@ -1183,7 +1206,7 @@ func (e *Engine) dashDetail(ctx context.Context, d store.Dashboard, rangeKey str
 	if err != nil {
 		return dash.Detail{}, err
 	}
-	h := &dashHistory{ctx: ctx, st: e.st, id: d.ID, now: now, points: pts, revs: series, marks: map[string]store.DashboardMarks{}}
+	h := &dashHistory{ctx: ctx, st: e.st, id: d.ID, points: pts, revs: series, marks: map[string]store.DashboardMarks{}}
 	values := dash.Values(spec, runs, h, now)
 
 	det := dash.Detail{Workdir: d.Workdir, Range: rg.Key, Tiles: spec.Tiles, Values: values, Choices: dash.RefreshChoices, Ranges: dash.Ranges}
@@ -1254,7 +1277,6 @@ type dashHistory struct {
 	ctx    context.Context
 	st     *store.Store
 	id     string
-	now    time.Time
 	points map[string][]store.DashboardPoint
 	revs   map[string]string // series -> its source's revision now
 	marks  map[string]store.DashboardMarks
@@ -1273,7 +1295,7 @@ func (h *dashHistory) mark(series string) store.DashboardMarks {
 	if m, ok := h.marks[series]; ok {
 		return m
 	}
-	m, _ := h.st.DashboardMarks(h.ctx, h.id, series, h.revs[series], h.now)
+	m, _ := h.st.DashboardMarks(h.ctx, h.id, series, h.revs[series])
 	h.marks[series] = m
 	return m
 }
@@ -1285,8 +1307,9 @@ func point(p *store.DashboardPoint) *dash.Point {
 	return &dash.Point{T: p.T, V: p.V}
 }
 
-func (h *dashHistory) Before(series string, d time.Duration) *dash.Point {
-	return point(h.mark(series).Before[d])
+func (h *dashHistory) Before(series string, at time.Time, d time.Duration) *dash.Point {
+	p, _ := h.st.DashboardPointAt(h.ctx, h.id, series, h.revs[series], at.Add(-d))
+	return point(p)
 }
 func (h *dashHistory) Oldest(series string) *dash.Point   { return point(h.mark(series).Oldest) }
 func (h *dashHistory) Previous(series string) *dash.Point { return point(h.mark(series).Previous) }

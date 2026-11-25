@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -66,10 +67,18 @@ func TestParseAndLookup(t *testing.T) {
 	if _, err := Lookup(v, "nope"); err == nil || !strings.Contains(err.Error(), "data, has_more, total") {
 		t.Errorf("missing key should list the keys: %v", err)
 	}
+	// a key asked of a list says what is there
+	rows, _ := Parse(`[{"accounts": 11}]`, "json")
+	if _, err := Lookup(rows, "rows.0.accounts"); err == nil || !strings.Contains(err.Error(), `the output is a list, not an object with "rows" in it`) {
+		t.Errorf("a key on a list: %v", err)
+	}
+	if _, err := Lookup(v, "data.id"); err == nil || !strings.Contains(err.Error(), `"data" is a list`) {
+		t.Errorf("a key on a nested list: %v", err)
+	}
 	if n, _ := Parse(" 1,234\n", "auto"); n != 1234.0 {
 		t.Errorf("number: %v", n)
 	}
-	rows, err := Parse("day,count\n2026-11-01,4\n2026-11-02,7\n", "csv")
+	rows, err = Parse("day,count\n2026-11-01,4\n2026-11-02,7\n", "csv")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,11 +101,10 @@ func TestParseAndLookup(t *testing.T) {
 type fakeHistory map[string][]Point
 
 func (h fakeHistory) Points(s string) []Point { return h[s] }
-func (h fakeHistory) Before(s string, d time.Duration) *Point {
+func (h fakeHistory) Before(s string, at time.Time, d time.Duration) *Point {
 	var best *Point
-	now := time.Now()
 	for i, p := range h[s] {
-		if now.Sub(p.T) >= d {
+		if at.Sub(p.T) >= d {
 			best = &h[s][i]
 		}
 	}
@@ -193,5 +201,114 @@ func TestSourceRev(t *testing.T) {
 	same.Label, same.TimeoutSeconds = "Other label", 60
 	if SourceRev("/p", same) != rev {
 		t.Error("the label or timeout changed the revision")
+	}
+}
+
+// A number that stopped refreshing is compared with the history before its
+// own time, not before now: counting from now compared the old value with
+// itself ("No change in 7 days" on a number 10 days old).
+func TestOldValueComparesFromItsOwnTime(t *testing.T) {
+	now := time.Now()
+	s := Spec{Title: "T", Refresh: "1h", Sources: []Source{{Key: "traffic", Command: "x", Format: "json"}},
+		Tiles: []Tile{{Type: "number", Title: "Visitors", Source: "traffic", Path: "visitors7d", Compare: "7d"},
+			{Type: "number", Title: "Avg", Source: "traffic", Path: "avg"}}}
+	if err := Check(&s); err != nil {
+		t.Fatal(err)
+	}
+	one := 1
+	lastOK := now.Add(-10 * 24 * time.Hour)
+	runs := map[string]Runs{"traffic": {
+		Latest: &RunView{State: RunFailed, ExitCode: &one, Note: "Not logged in", At: now},
+		LastOK: &RunView{State: RunOK, Output: `{"visitors7d": 1397, "avg": 200}`, At: lastOK},
+	}}
+	h := fakeHistory{
+		SeriesKey("traffic", "visitors7d"): {{T: lastOK.Add(-7*24*time.Hour - time.Hour), V: 1271}, {T: lastOK, V: 1397}},
+		SeriesKey("traffic", "avg"):        {{T: lastOK.Add(-25 * time.Hour), V: 180}, {T: lastOK, V: 200}},
+	}
+	vals := Values(s, runs, h, now)
+	if v := vals[0]; !v.Stale || v.Compare == nil || v.Compare.Value != 1271 {
+		t.Errorf("visitors: compared with %+v, want the point 7 days before the value (1271)", v.Compare)
+	}
+	if v := vals[1]; v.Compare == nil || v.Compare.Value != 180 {
+		t.Errorf("avg: compared with %+v, want the point a day before the value (180)", v.Compare)
+	}
+}
+
+// A daily chart, oldest day first, that has more days than it shows keeps
+// the newest days (2026-11-24: "Sign-ins per day (30 days)" showed Oct 27 to
+// Nov 15 and hid the ten newest).
+func TestBarsKeepTheNewestDays(t *testing.T) {
+	day := func(i int) time.Time { return time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i) }
+	var oldestFirst, newestFirst, isoDays []string
+	for i := 0; i < 30; i++ {
+		oldestFirst = append(oldestFirst, fmt.Sprintf(`{"day":%q,"n":%d}`, day(i).Format("Jan 02"), i))
+		newestFirst = append([]string{fmt.Sprintf(`{"day":%q,"n":%d}`, day(i).Format("Jan 02"), i)}, newestFirst...)
+		isoDays = append(isoDays, fmt.Sprintf(`{"day":%q,"n":%d}`, day(i).Format("2006-01-02"), i))
+	}
+	s := Spec{Title: "T", Refresh: "15m", Sources: []Source{
+		{Key: "up", Command: "x", Format: "json"}, {Key: "down", Command: "y", Format: "json"},
+		{Key: "iso", Command: "z", Format: "json"}, {Key: "plans", Command: "w", Format: "json"},
+	}, Tiles: []Tile{
+		{Type: "bars", Title: "Up", Source: "up", LabelField: "day", ValueField: "n", Limit: 20},
+		{Type: "bars", Title: "Down", Source: "down", LabelField: "day", ValueField: "n", Limit: 20},
+		{Type: "bars", Title: "Iso", Source: "iso", LabelField: "day", ValueField: "n", Limit: 7},
+		{Type: "bars", Title: "Plans", Source: "plans", Limit: 2},
+		{Type: "bars", Title: "Whole month", Source: "up", LabelField: "day", ValueField: "n"},
+	}}
+	if err := Check(&s); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	ok := func(out string) Runs {
+		r := &RunView{State: RunOK, Output: out, At: now}
+		return Runs{Latest: r, LastOK: r}
+	}
+	runs := map[string]Runs{
+		"up":    ok("[" + strings.Join(oldestFirst, ",") + "]"),
+		"down":  ok("[" + strings.Join(newestFirst, ",") + "]"),
+		"iso":   ok("[" + strings.Join(isoDays, ",") + "]"),
+		"plans": ok(`[{"plan":"free","n":900},{"plan":"pro","n":304},{"plan":"team","n":12}]`),
+	}
+	byKey := map[string]TileValue{}
+	for _, v := range Values(s, runs, fakeHistory{}, now) {
+		byKey[v.Key] = v
+	}
+	check := func(key string, n, more int, oldestFirst bool, first, last string) {
+		t.Helper()
+		v := byKey[key]
+		if len(v.Bars) != n || v.More != more || v.OldestFirst != oldestFirst {
+			t.Fatalf("%s: %d bars, more %d, oldest first %v", key, len(v.Bars), v.More, v.OldestFirst)
+		}
+		if v.Bars[0].Label != first || v.Bars[n-1].Label != last {
+			t.Errorf("%s: shows %s to %s, want %s to %s", key, v.Bars[0].Label, v.Bars[n-1].Label, first, last)
+		}
+	}
+	check("up", 20, 10, true, "Nov 06", "Nov 25")
+	check("down", 20, 10, false, "Nov 25", "Nov 06") // newest first already
+	check("iso", 7, 23, true, "2026-11-19", "2026-11-25")
+	check("plans", 2, 1, false, "free", "pro")            // not dates: the first ones
+	check("whole-month", 30, 0, true, "Oct 27", "Nov 25") // all fit; still dates, oldest first
+}
+
+func TestDatesInOrder(t *testing.T) {
+	for _, c := range []struct {
+		labels []string
+		want   bool
+	}{
+		{[]string{"Dec 30", "Dec 31", "Jan 01", "Jan 02"}, true}, // a new year, no year in the label
+		{[]string{"2025-12-31", "2026-01-01"}, true},
+		{[]string{"2026-01-01", "2025-12-31"}, false},
+		{[]string{"Jan 02", "Jan 01"}, false},
+		{[]string{"Jan 01", "Dec 31"}, true}, // one year, start to end
+		{[]string{"Nov 3", "Nov 3"}, false},
+		{[]string{"2026-11-24T10:00:00Z", "2026-11-24T11:00:00Z"}, true},
+		{[]string{"2026-11", "2026-12"}, true},
+		{[]string{"free", "pro"}, false},
+		{[]string{"1", "2", "3"}, false},
+		{[]string{"Nov 3"}, false},
+	} {
+		if got := datesInOrder(c.labels); got != c.want {
+			t.Errorf("datesInOrder(%q) = %v, want %v", c.labels, got, c.want)
+		}
 	}
 }

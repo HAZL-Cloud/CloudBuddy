@@ -161,10 +161,19 @@ func TestDashboardRunsAndPointsFollowTheCommand(t *testing.T) {
 	if len(pts["n|"]) != 0 {
 		t.Errorf("the old command's numbers came back: %+v", pts)
 	}
-	m, err := s.DashboardMarks(ctx, "db_rev", "n|", cur, time.Now())
+	m, err := s.DashboardMarks(ctx, "db_rev", "n|", cur)
 	must(err)
-	if m.Oldest != nil || m.Previous != nil || m.Before[time.Hour] != nil || m.Before[24*time.Hour] != nil {
+	if m.Oldest != nil || m.Previous != nil {
 		t.Errorf("the old command's numbers came back as marks: %+v", m)
+	}
+	if p, err := s.DashboardPointAt(ctx, "db_rev", "n|", cur, time.Now()); err != nil || p != nil {
+		t.Errorf("the old command's number came back to compare with: %+v %v", p, err)
+	}
+	if p, err := s.DashboardPointAt(ctx, "db_rev", "n|", old, time.Now()); err != nil || p == nil || p.V != 1 {
+		t.Errorf("the point at a time: %+v %v", p, err)
+	}
+	if p, err := s.DashboardPointAt(ctx, "db_rev", "n|", old, at.Add(-time.Minute)); err != nil || p != nil {
+		t.Errorf("a point after the time came back: %+v %v", p, err)
 	}
 
 	// the same command again: its history is its own
@@ -226,5 +235,60 @@ func TestMigration004MatchesSourceRev(t *testing.T) {
 		if run != want || point != want {
 			t.Errorf("%s: run %q point %q, want %q", src.Key, run, point, want)
 		}
+	}
+}
+
+// Migration 005 keeps the OK each command had: its version of the files
+// becomes the first one allowed.
+func TestMigration005KeepsTheOK(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	saveDash(t, s, "db_ok", 3600, dash.Source{Key: "a", Command: "./a.sh"}, dash.Source{Key: "b", Command: "./b.sh"})
+	for _, q := range []string{
+		`INSERT INTO dashboard_approvals(dashboard_id,source_key,command,cwd,exec_digest,allowed) VALUES ('db_ok','a','./a.sh','/w','d1',true)`,
+		`INSERT INTO dashboard_approvals(dashboard_id,source_key,command,cwd,exec_digest,allowed) VALUES ('db_ok','b','./b.sh','/w','d2',false)`,
+	} {
+		if _, err := s.db.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sqlText, err := migrationFS.ReadFile("migrations/005_dashboard_ok_digests.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(ctx, string(sqlText)); err != nil {
+		t.Fatal(err)
+	}
+	all, err := s.DashboardApprovals(ctx, "db_ok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := all["a"].OKDigests; len(got) != 1 || got[0] != "d1" {
+		t.Errorf("allowed: %v", got)
+	}
+	if got := all["b"].OKDigests; len(got) != 0 {
+		t.Errorf("not allowed: %v", got)
+	}
+	// a new OK adds to it; a no empties it
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(s.SetDashboardApproval(ctx, "db_ok", DashboardApproval{SourceKey: "a", Command: "./a.sh", Cwd: "/w", ExecDigest: "d3", Allowed: true}))
+	all, _ = s.DashboardApprovals(ctx, "db_ok")
+	if got := all["a"].OKDigests; len(got) != 2 || got[0] != "d1" || got[1] != "d3" {
+		t.Errorf("after a second OK: %v", got)
+	}
+	must(s.SetDashboardApproval(ctx, "db_ok", DashboardApproval{SourceKey: "a", Command: "./a.sh", Cwd: "/other", ExecDigest: "d4", Allowed: true}))
+	all, _ = s.DashboardApprovals(ctx, "db_ok")
+	if got := all["a"].OKDigests; len(got) != 1 || got[0] != "d4" {
+		t.Errorf("an OK in another folder kept the old ones: %v", got)
+	}
+	must(s.SetDashboardApproval(ctx, "db_ok", DashboardApproval{SourceKey: "a", Command: "./a.sh", Cwd: "/other", ExecDigest: "d4", Allowed: false}))
+	all, _ = s.DashboardApprovals(ctx, "db_ok")
+	if got := all["a"].OKDigests; len(got) != 0 {
+		t.Errorf("after a no: %v", got)
 	}
 }

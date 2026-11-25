@@ -126,8 +126,120 @@ function usersDashboard(): DashboardDetail {
   }
 }
 
+/** A day `daysAgo` before today, as a plain date ("2026-11-14"). */
+const dayISO = (daysAgo: number) => {
+  const d = new Date(Date.now() - daysAgo * 24 * H)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// A dashboard whose numbers stopped refreshing: its traffic command fails (the
+// CLI's login expired) and a script waits for an OK again after a git checkout.
+function trafficDashboard(): DashboardDetail {
+  const D = 24 * H
+  const tiles: Tile[] = [
+    { key: 'visitors7d', type: 'number', title: 'Visitors, last 7 days', source: 'traffic', path: 'visitors7d', width: 1, unit: 'visitors', good: 'up', compare: '7d', note: 'Unique visitors, complete days' },
+    { key: 'avg', type: 'number', title: 'Avg visitors / day', source: 'traffic', path: 'avg', width: 1, good: 'up' },
+    { key: 'pageviews7d', type: 'number', title: 'Page views, last 7 days', source: 'traffic', path: 'pageViews7d', width: 1, good: 'up', compare: '7d' },
+    { key: 'signins', type: 'number', title: 'Signed in today', source: 'signins', path: 'today', width: 1, good: 'up' },
+    { key: 'signins-over-time', type: 'line', title: 'Sign-ins over time', series: [{ source: 'signins', path: 'today', label: 'Signed in' }], width: 4 },
+    { key: 'daily', type: 'line', title: 'Visitors per day (30d)', source: 'traffic', path: 'daily', labelField: 'date', valueField: 'visitors', width: 2 },
+    { key: 'dailypv', type: 'bars', title: 'Page views per day (30d)', source: 'traffic', path: 'daily', labelField: 'date', valueField: 'pageViews', limit: 14, width: 2 },
+  ]
+  const days = Array.from({ length: 30 }, (_, i) => {
+    const visitors = 160 + Math.round(Math.sin(i * 1.3) * 45 + Math.cos(i * 0.7) * 25)
+    return { date: dayISO(39 - i), visitors, pageViews: Math.round(visitors * 0.7 + ((i * 37) % 60)) }
+  })
+  const failNote = [
+    'node:internal/errors:983',
+    '  const err = new Error(message);',
+    '              ^',
+    '',
+    'Error: Command failed: npx wrangler whoami',
+    '    at genericNodeError (node:internal/errors:983:15)',
+    '    at checkExecSyncError (node:child_process:892:11)',
+    '',
+    'Node.js v24.2.0',
+  ].join('\n')
+  const stale = { stale: true, updatedAt: iso(10 * D), message: 'The last refresh failed, so this is from an earlier run. The command failed (exit code 1): Error: Command failed: npx wrangler whoami' }
+  const values: TileValue[] = [
+    { key: 'visitors7d', state: 'ok', number: 1397, compare: { value: 1271, at: iso(17 * D), label: 'in 7 days' }, ...stale },
+    { key: 'avg', state: 'ok', number: 200, compare: { value: 182, at: iso(11 * D), label: 'in 24 hours' }, ...stale },
+    { key: 'pageviews7d', state: 'ok', number: 1075, compare: { value: 1120, at: iso(17 * D), label: 'in 7 days' }, ...stale },
+    { key: 'signins', state: 'waiting', message: 'CloudBuddy runs this tile’s command once you allow it.' },
+    { key: 'daily', state: 'ok', series: [{ label: 'Visitors per day (30d)', bars: days.map((d) => ({ label: d.date, value: d.visitors })) }], ...stale },
+    // limit 14 of 30 days, oldest first: the server keeps the newest
+    { key: 'dailypv', state: 'ok', bars: days.slice(-14).map((d) => ({ label: d.date, value: d.pageViews })), more: days.length - 14, oldestFirst: true, ...stale },
+    {
+      key: 'signins-over-time',
+      state: 'ok',
+      waiting: true,
+      message: 'A command for this chart is waiting for your OK.',
+      series: [{ label: 'Signed in', points: history(24 * 6, 14, 23, 6).map((p) => ({ ...p, t: new Date(new Date(p.t).getTime() - 3 * D).toISOString() })) }],
+      updatedAt: iso(3 * D),
+    },
+  ]
+  const cwd = '/Users/you/code/site'
+  return {
+    id: 'db_traffic',
+    title: 'Site traffic',
+    description: 'Visitors and page views from the CDN, and sign-ins.',
+    conversationId: 'deploy',
+    refresh: '1h',
+    paused: false,
+    running: false,
+    lastRunAt: iso(49 * 60_000),
+    nextRunAt: iso(-11 * 60_000),
+    updatedAt: iso(14 * D),
+    needsOk: 1,
+    failing: 1,
+    tileCount: tiles.length,
+    headlines: [],
+    workdir: cwd,
+    range: '24h',
+    tiles,
+    values,
+    sources: [
+      {
+        key: 'traffic',
+        label: 'CDN daily traffic, last 30 days',
+        command: 'node scripts/cdn-traffic.mjs 30',
+        cwd,
+        format: 'json',
+        verdict: 'needs_ok',
+        approval: { allowed: true, decidedAt: iso(14 * D) },
+        lastRun: { state: 'failed', exitCode: 1, output: '', note: failNote, at: iso(49 * 60_000), durationMs: 1210 },
+      },
+      {
+        key: 'signins',
+        label: 'Sign-in numbers',
+        revision: 'rev-signins-2',
+        command: 'python3 scripts/signins.py',
+        cwd,
+        format: 'json',
+        verdict: 'needs_ok',
+        reason: 'The files this command runs changed after you allowed it, so it needs your OK again. CloudBuddy can’t tell that this only reads: it runs python3.',
+        approval: { allowed: true, decidedAt: iso(3 * D), changed: true },
+        lastRun: {
+          state: 'waiting',
+          output: '',
+          at: iso(49 * 60_000),
+          durationMs: 0,
+          note: 'The files this command runs changed after you allowed it, so it needs your OK again.',
+        },
+      },
+    ],
+    refreshChoices: ['1m', '5m', '15m', '30m', '1h', '6h', '12h', '1d'],
+    rangeChoices: [
+      { key: '1h', label: '1 hour' },
+      { key: '24h', label: '24 hours' },
+      { key: '7d', label: '7 days' },
+      { key: '30d', label: '30 days' },
+    ],
+  }
+}
+
 export function seedDashboards(): DashboardDetail[] {
-  return [usersDashboard()]
+  return [usersDashboard(), trafficDashboard()]
 }
 
 function summary(d: DashboardDetail): DashboardSummary {
@@ -229,7 +341,7 @@ export function dashboardRoute(m: DashMock, method: string, fullPath: string, b:
       d.tiles.forEach((t, i) => {
         if (t.source !== key) return
         d.values[i] = allow
-          ? { key: t.key, state: 'ok', number: 3480, updatedAt: new Date().toISOString() }
+          ? { key: t.key, state: 'ok', number: d.values[i]?.number ?? 3480, updatedAt: new Date().toISOString() }
           : { key: t.key, state: 'declined', message: 'You didn’t allow this command, so it doesn’t run.' }
       })
     }

@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type RefObject } from 'react'
 import { ApiError } from '../api'
-import { formatValue, refreshLabel, untilLabel } from '../dashFormat'
+import { errorLine, formatValue, refreshLabel, untilLabel } from '../dashFormat'
 import { duration, plural, relativeWhen } from '../format'
 import { useDashboard, useDashboards, useDashboardSchedule, useDecideDashboardSource, useDeleteDashboard, useRefreshDashboard } from '../queries'
 import type { DashboardDetail, DashboardSource, DashboardSummary } from '../types'
@@ -132,6 +132,9 @@ function DashboardView({ id, onBack, onOpenChat }: { id: string; onBack: () => v
   const [range, setRange] = useState('24h')
   const { data, isError, error, isPlaceholderData, refetch } = useDashboard(id, range)
   const approvalsRef = useRef<HTMLDivElement>(null)
+  const sourcesRef = useRef<HTMLDetailsElement>(null)
+  const [sourcesOpen, setSourcesOpen] = useState(false)
+  const [shownSource, setShownSource] = useState<string | null>(null)
 
   if (isError && error instanceof ApiError && error.status === 404) {
     return (
@@ -163,6 +166,12 @@ function DashboardView({ id, onBack, onOpenChat }: { id: string; onBack: () => v
     )
   }
   const waiting = data.sources.filter(waitsForYou)
+  const failed = data.sources.filter((s) => s.lastRun?.state === 'failed')
+  const showSource = (key: string) => {
+    setSourcesOpen(true)
+    setShownSource(key)
+    requestAnimationFrame(() => sourcesRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }))
+  }
   const hasCharts = data.tiles.some((t) => t.type === 'line' || t.type === 'number' || (t.type === 'status' && t.path))
   const span = { '1h': 3600_000, '24h': 86_400_000, '7d': 7 * 86_400_000, '30d': 30 * 86_400_000 }[data.range] ?? 86_400_000
   const values = new Map(data.values.map((v) => [v.key, v]))
@@ -192,6 +201,31 @@ function DashboardView({ id, onBack, onOpenChat }: { id: string; onBack: () => v
           ))}
         </div>
       )}
+      {failed.length > 0 && (
+        <div className="dash-alert" role="region" aria-label="Commands that failed">
+          <Icon name="x" />
+          <div>
+            <b>{failed.length === 1 ? 'A command failed on the last refresh' : `${failed.length} commands failed on the last refresh`}</b>
+            <p>Its tiles show the numbers from the last refresh that worked, with their date, until it works again.</p>
+            <ul>
+              {failed.map((s) => (
+                <li key={s.key}>
+                  <strong>{s.label || s.key}</strong>
+                  {s.lastRun?.note ? (
+                    <>
+                      {': '}
+                      <code>{errorLine(s.lastRun.note)}</code>
+                    </>
+                  ) : null}{' '}
+                  <button type="button" className="btn link inline" onClick={() => showSource(s.key)}>
+                    Show the output
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
       {hasCharts && (
         <div className="dash-filters" role="group" aria-label="Time range for trends and charts">
           <span className="dash-filters-k">Show the last</span>
@@ -209,7 +243,7 @@ function DashboardView({ id, onBack, onOpenChat }: { id: string; onBack: () => v
           <TileView key={t.key} tile={t} value={values.get(t.key)} span={span} onReview={review} />
         ))}
       </div>
-      <Sources d={data} />
+      <Sources d={data} detailsRef={sourcesRef} open={sourcesOpen} onOpenChange={setSourcesOpen} shown={shownSource} onShow={setShownSource} />
     </div>
   )
 }
@@ -354,12 +388,21 @@ function SourceDecision({ dashboardId, source }: { dashboardId: string; source: 
   )
 }
 
-function Sources({ d }: { d: DashboardDetail }) {
+interface SourcesProps {
+  d: DashboardDetail
+  detailsRef: RefObject<HTMLDetailsElement>
+  /** Whether the section is open, and which command's output shows. */
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  shown: string | null
+  onShow: (key: string | null) => void
+}
+
+function Sources({ d, detailsRef, open: sectionOpen, onOpenChange, shown: open, onShow: setOpen }: SourcesProps) {
   const decide = useDecideDashboardSource()
   const toast = useToast()
-  const [open, setOpen] = useState<string | null>(null)
   return (
-    <details className="dash-sources">
+    <details className="dash-sources" ref={detailsRef} open={sectionOpen} onToggle={(e) => onOpenChange(e.currentTarget.open)}>
       <summary>
         Commands <span>{plural(d.sources.length, 'command')} · run in {d.workdir}</span>
       </summary>

@@ -1,5 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
-import { delta, formatValue, niceTicks, tickLabel, timeLabel } from '../dashFormat'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
+import { categoryLabel, delta, formatValue, niceTicks, placeLabels, tickLabel, timeLabel } from '../dashFormat'
 import { relativeWhen } from '../format'
 import type { Bar, Point, Tile, TileColumn, TileValue } from '../types'
 import { Icon } from './Icon'
@@ -24,6 +24,26 @@ function useWidth<T extends HTMLElement>(fallback = 480) {
     return () => ro.disconnect()
   }, [])
   return [ref, width] as const
+}
+
+/**
+ * Width and height of an element, kept up to date. Falls back to fixed sizes
+ * where ResizeObserver is missing (tests).
+ */
+function useSize<T extends HTMLElement>(fallbackW: number, fallbackH: number) {
+  const ref = useRef<T>(null)
+  const [size, setSize] = useState({ w: fallbackW, h: fallbackH })
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect
+      if (r && r.width > 0) setSize({ w: Math.round(r.width), h: Math.round(r.height) })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return [ref, size] as const
 }
 
 // ---------- sparkline ----------
@@ -59,12 +79,16 @@ interface LineSeries {
   points: { x: number; y: number; label?: string }[]
 }
 
+/** The least height of a line chart's plot; it grows to fill a tile made taller by its row. */
+const CHART_H = 190
+
 /** A line chart with a crosshair: hover or use the arrow keys to read every line at one time. */
 export function LineChart({ series, tile, categories, title }: { series: LineSeries[]; tile: Tile; categories?: string[]; title: string }) {
-  const [ref, width] = useWidth<HTMLDivElement>()
+  const [ref, size] = useSize<HTMLDivElement>(480, CHART_H)
   const [hover, setHover] = useState<number | null>(null)
   const tipId = useId()
-  const h = 190
+  const width = size.w
+  const h = Math.max(CHART_H, size.h)
   const pad = { top: 12, right: 18, bottom: 26, left: 52 }
   const all = series.flatMap((s) => s.points)
   const xs = all.map((p) => p.x)
@@ -80,28 +104,22 @@ export function LineChart({ series, tile, categories, title }: { series: LineSer
   const sy = (y: number) => pad.top + (y1 === y0 ? ih / 2 : ih - ((y - y0) / (y1 - y0)) * ih)
   const span = x1 - x0
   const xLabel = (x: number, long = false) => {
-    if (categories) return categories[Math.round(x)] ?? ''
+    if (categories) return categoryLabel(categories[Math.round(x)] ?? '', long)
     return timeLabel(new Date(x).toISOString(), span, long)
   }
   // the x positions a crosshair can stop at: every point of every line
   const stops = useMemo(() => Array.from(new Set(xs)).sort((a, b) => a - b), [xs.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
-  // As many labels as fit without touching: always the first and the last, evenly between.
+  // As many labels as fit without touching, measured from where each is drawn:
+  // always the first and the last, evenly between (11 px figures are about 6.6 px wide).
   const xTicks = useMemo(() => {
-    if (stops.length <= 1) return stops
-    const longest = Math.max(...stops.map((x) => xLabel(x).length))
-    const labelW = longest * 6.6 + 18
-    const n = Math.min(stops.length, Math.max(2, Math.floor(iw / labelW) + 1))
-    const picked = Array.from({ length: n }, (_, i) => stops[Math.round((i * (stops.length - 1)) / (n - 1))] as number)
-    const last = picked[picked.length - 1] as number
-    const kept: number[] = []
-    for (const x of picked) {
-      const prev = kept[kept.length - 1]
-      if (prev !== undefined && sx(x) - sx(prev) < labelW) continue
-      if (x !== last && sx(last) - sx(x) < labelW) continue
-      kept.push(x)
-    }
-    return kept
-  }, [stops, iw]) // eslint-disable-line react-hooks/exhaustive-deps
+    const labels = stops.map((x) => xLabel(x))
+    return placeLabels(
+      stops.map(sx),
+      labels.map((l) => l.length * 6.6),
+      pad.left,
+      width - 2,
+    ).map(({ i, x }) => ({ x, text: labels[i] ?? '' }))
+  }, [stops, iw, width]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const at = hover === null ? null : (stops[hover] ?? null)
   const nearest = (s: LineSeries, x: number) =>
@@ -132,7 +150,7 @@ export function LineChart({ series, tile, categories, title }: { series: LineSer
   const tipLeft = at === null ? 0 : Math.min(Math.max(sx(at) + 12, pad.left), width - 170)
 
   return (
-    <div className="chart" ref={ref}>
+    <div className="chart">
       {!single && (
         <ul className="legend" aria-label="Lines">
           {series.map((s, i) => (
@@ -143,6 +161,7 @@ export function LineChart({ series, tile, categories, title }: { series: LineSer
           ))}
         </ul>
       )}
+      <div className="chart-plot" ref={ref}>
       <svg
         width={width}
         height={h}
@@ -161,9 +180,9 @@ export function LineChart({ series, tile, categories, title }: { series: LineSer
             </text>
           </g>
         ))}
-        {xTicks.map((x, i) => (
-          <text key={i} className="tick x" x={sx(x)} y={h - 6} textAnchor={i === 0 && xTicks.length > 1 ? 'start' : i === xTicks.length - 1 && xTicks.length > 1 ? 'end' : 'middle'}>
-            {xLabel(x)}
+        {xTicks.map((t, i) => (
+          <text key={i} className="tick x" x={t.x} y={h - 6} textAnchor="start">
+            {t.text}
           </text>
         ))}
         {series.map((s, i) => {
@@ -213,6 +232,7 @@ export function LineChart({ series, tile, categories, title }: { series: LineSer
           })}
         </div>
       )}
+      </div>
     </div>
   )
 }
@@ -220,12 +240,23 @@ export function LineChart({ series, tile, categories, title }: { series: LineSer
 // ---------- bars ----------
 
 /** Horizontal bars, value at the tip. */
-export function BarsChart({ bars, tile }: { bars: Bar[]; tile: Tile }) {
+/**
+ * A bars tile. newestLast: the bars are dates, oldest first, so a list long
+ * enough to scroll opens at its end, on the newest days.
+ */
+export function BarsChart({ bars, tile, newestLast = false }: { bars: Bar[]; tile: Tile; newestLast?: boolean }) {
   const max = Math.max(0, ...bars.map((b) => b.value))
   const min = Math.min(0, ...bars.map((b) => b.value))
   const span = max - min || 1
+  const list = useRef<HTMLUListElement>(null)
+  const newest = bars[bars.length - 1]?.label
+  useLayoutEffect(() => {
+    const el = list.current
+    if (newestLast && el) el.scrollTop = el.scrollHeight
+  }, [newestLast, newest, bars.length])
+  // many bars: thinner, and the list scrolls like a table's rows
   return (
-    <ul className="bars">
+    <ul ref={list} className={`bars ${bars.length > 12 ? 'dense' : ''}`} data-newest-last={newestLast || undefined}>
       {bars.map((b, i) => {
         const left = ((0 - min) / span) * 100
         const w = (Math.abs(b.value) / span) * 100
@@ -382,6 +413,12 @@ function chartRows(tile: Tile, value: TileValue, span: number): { rows: Record<s
   return { rows, columns: [{ field: 'when', label: 'When' }, ...cs.series.map((s, i) => ({ field: `s${i}`, label: s.label, format: tile.format }))] }
 }
 
+/** "From Nov 14", "From yesterday", "From 3 h ago". */
+function fromWhen(iso: string): string {
+  const r = relativeWhen(iso)
+  return `From ${r === 'Just now' || r === 'Yesterday' ? r.toLowerCase() : r}`
+}
+
 export interface TileViewProps {
   tile: Tile
   value: TileValue | undefined
@@ -427,7 +464,7 @@ export function TileView({ tile, value, span, onReview }: TileViewProps) {
         body = <StatusBody value={v} />
         break
       case 'bars':
-        body = (v.bars?.length ?? 0) > 0 ? <BarsChart bars={v.bars ?? []} tile={tile} /> : <p className="tile-empty">Nothing to show yet.</p>
+        body = (v.bars?.length ?? 0) > 0 ? <BarsChart bars={v.bars ?? []} tile={tile} newestLast={v.oldestFirst} /> : <p className="tile-empty">Nothing to show yet.</p>
         break
       case 'table':
         body =
@@ -456,7 +493,9 @@ export function TileView({ tile, value, span, onReview }: TileViewProps) {
     body = (
       <>
         {body}
-        <div className="dtable-more">{v.more} more not shown</div>
+        <div className="dtable-more">
+          {v.more} {v.oldestFirst ? 'earlier' : 'more'} not shown
+        </div>
       </>
     )
   }
@@ -474,20 +513,36 @@ export function TileView({ tile, value, span, onReview }: TileViewProps) {
       <div className="tile-body">{body}</div>
       {(tile.note || (ok && v.message) || (ok && v.updatedAt)) && (
         <footer className="tile-foot">
-          {ok && v.stale && v.message && (
+          {ok && v.waiting && (
+            <span className="tile-warn" title={v.message}>
+              <Icon name="hand" small />
+              Waiting for your OK
+              {onReview && (
+                <button type="button" className="btn link inline" onClick={onReview}>
+                  Review
+                </button>
+              )}
+            </span>
+          )}
+          {ok && !v.waiting && v.stale && v.message && (
             <span className="tile-warn" title={v.message}>
               <Icon name="question" small />
               Last refresh failed
             </span>
           )}
-          {ok && !v.stale && v.message && (
+          {ok && !v.waiting && !v.stale && v.message && (
             <span className="tile-warn">
               <Icon name="question" small />
               {v.message}
             </span>
           )}
           {tile.note && <span>{tile.note}</span>}
-          {ok && v.updatedAt && !v.stale && <span className="tile-when">{relativeWhen(v.updatedAt)}</span>}
+          {/* an old value says how old: a number that stopped refreshing looked current */}
+          {ok && v.updatedAt && (
+            <span className={`tile-when ${v.stale ? 'old' : ''}`} title={new Date(v.updatedAt).toLocaleString()}>
+              {v.stale ? fromWhen(v.updatedAt) : relativeWhen(v.updatedAt)}
+            </span>
+          )}
         </footer>
       )}
     </article>

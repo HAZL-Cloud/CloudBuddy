@@ -121,9 +121,11 @@ interface Tile {
 interface TileValue {                      // what a tile shows now, worked out by the server
   key: string; state: "ok" | "pending" | "waiting" | "blocked" | "declined" | "error";
   message?: string; stale?: boolean;       // stale: the last refresh failed, this is the last good value
+  waiting?: boolean;                       // a line chart's history, shown while a command for it waits for the user's OK
   number?: number; compare?: { value, at, label }; spark?: Point[];
   series?: { label, points?: Point[], bars?: Bar[] }[]; bars?: Bar[];
   rows?: object[]; columns?: TileColumn[]; more?: number; text?: string; status?: "ok" | "warn" | "fail";
+  oldestFirst?: boolean;                   // bars: dates, oldest first; the page opens the list at the newest, and any left out are the earliest
 }
 interface DashboardSource {                // one command
   key: string; label?: string; command: string; cwd: string; format: string;

@@ -60,7 +60,7 @@ func Tools() []map[string]any {
 			"labelField": str("bars, line from rows: the field with the label (or x value)."),
 			"valueField": str("bars, line from rows: the field with the number."),
 			"columns":    map[string]any{"type": "array", "items": column, "description": "table: which fields to show, in order. Leave out to show all."},
-			"limit":      num("bars, table: most rows to show."),
+			"limit":      num("bars, table: most rows to show (bars 31, table 50). Bars labeled with dates, oldest first, keep the newest."),
 			"warnAbove":  num("status: warning above this number."),
 			"failAbove":  num("status: failing above this number."),
 			"warnBelow":  num("status: warning below this number."),

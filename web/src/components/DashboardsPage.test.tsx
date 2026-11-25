@@ -17,7 +17,7 @@ describe('the Dashboards page', () => {
   it('shows in the sidebar with the number of commands waiting for an OK', async () => {
     renderWithProviders(<App />)
     await screen.findByRole('complementary', { name: 'Navigation' })
-    expect(await sidebar().findByLabelText('1 waiting for your OK')).toBeInTheDocument()
+    expect(await sidebar().findByLabelText('2 waiting for your OK')).toBeInTheDocument()
   })
 
   it('lists dashboards with their headline numbers', async () => {
@@ -86,7 +86,59 @@ describe('the Dashboards page', () => {
     await userEvent.click(page.getByRole('button', { name: 'Delete this dashboard' }))
     const dialog = within(screen.getByRole('dialog', { name: /Delete “Users”/ }))
     await userEvent.click(dialog.getByRole('button', { name: 'Delete dashboard' }))
-    expect(await page.findByText('No dashboards yet')).toBeInTheDocument()
+    await waitFor(() => expect(page.queryByRole('button', { name: /Users/ })).not.toBeInTheDocument())
+    expect(page.getByRole('button', { name: /Site traffic/ })).toBeInTheDocument()
+  })
+
+  it('says when numbers are old and why: a failed refresh, or a command waiting for an OK again', async () => {
+    const page = within(await openDashboards())
+    await userEvent.click(await page.findByRole('button', { name: /Site traffic/ }))
+    await page.findByRole('heading', { name: 'Site traffic', level: 2 })
+
+    const visitors = page.getByRole('article', { name: 'Visitors, last 7 days' })
+    expect(within(visitors).getByText('1,397')).toBeInTheDocument()
+    expect(within(visitors).getByText('Last refresh failed')).toBeInTheDocument()
+    expect(within(visitors).getByText(/^From /)).toBeInTheDocument()
+    expect(within(visitors).getByText('+126')).toBeInTheDocument()
+
+    // a changed script waits: its number tile is empty, a line keeps its history and says why it stopped
+    const signins = page.getByRole('article', { name: 'Signed in today' })
+    expect(within(signins).getByText('Waiting for your OK')).toBeInTheDocument()
+    const line = page.getByRole('article', { name: 'Sign-ins over time' })
+    expect(within(line).getByText('Waiting for your OK')).toBeInTheDocument()
+    expect(within(line).getByRole('button', { name: 'Review' })).toBeInTheDocument()
+    expect(within(line).queryByText('Last refresh failed')).not.toBeInTheDocument()
+
+    // the failed command, its error line, and a way to its output
+    const failed = within(page.getByRole('region', { name: 'Commands that failed' }))
+    expect(failed.getByText('Error: Command failed: npx wrangler whoami')).toBeInTheDocument()
+    await userEvent.click(failed.getByRole('button', { name: 'Show the output' }))
+    expect(await page.findByRole('button', { name: 'Hide output' })).toBeInTheDocument()
+    expect(page.getByText(/Node\.js v24\.2\.0/)).toBeVisible()
+  })
+
+  it('writes plain dates on a chart axis as month and day, with room between them', async () => {
+    const page = within(await openDashboards())
+    await userEvent.click(await page.findByRole('button', { name: /Site traffic/ }))
+    const chart = await page.findByRole('article', { name: 'Visitors per day (30d)' })
+    const ticks = Array.from(chart.querySelectorAll('text.tick.x'))
+    expect(ticks.length).toBeGreaterThan(2)
+    for (const t of ticks) expect(t.textContent).toMatch(/^[A-Z][a-z]{2} \d{1,2}$/)
+    const xs = ticks.map((t) => Number(t.getAttribute('x')))
+    for (let i = 1; i < ticks.length; i++) {
+      expect(xs[i]! - (xs[i - 1]! + (ticks[i - 1]!.textContent?.length ?? 0) * 6.6)).toBeGreaterThanOrEqual(12)
+    }
+  })
+
+  it('shows the newest days of a daily chart and says the earliest are left out', async () => {
+    const page = within(await openDashboards())
+    await userEvent.click(await page.findByRole('button', { name: /Site traffic/ }))
+    const tile = await page.findByRole('article', { name: 'Page views per day (30d)' })
+    expect(within(tile).getByText('16 earlier not shown')).toBeInTheDocument()
+    const list = within(tile).getByRole('list')
+    expect(within(list).getAllByRole('listitem')).toHaveLength(14)
+    // a list long enough to scroll opens at its end, on the newest days
+    expect(list).toHaveAttribute('data-newest-last', 'true')
   })
 
   it('goes back to the chat that built it', async () => {

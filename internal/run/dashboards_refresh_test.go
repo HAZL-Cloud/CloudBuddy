@@ -333,3 +333,126 @@ func TestDashRefreshAskedBeforePauseDoesntRun(t *testing.T) {
 		t.Errorf("a refresh asked after the pause didn't run")
 	}
 }
+
+// sourceRev is the revision the page shows for a command that waits.
+func sourceRev(t *testing.T, e *Engine, id, key string) string {
+	t.Helper()
+	d, err := e.DashboardDetail(context.Background(), id, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range d.Sources {
+		if s.Key == key {
+			return s.Revision
+		}
+	}
+	t.Fatalf("no source %q", key)
+	return ""
+}
+
+// Dashboard commands run marked as Claude Code marks the commands it runs,
+// whatever CloudBuddy itself was started with, so a CLI prints on the timer
+// what the agent saw in the chat (2026-11-24: the Supabase CLI wraps query
+// results in {"rows": [...]} only for an agent).
+func TestDashCommandsRunMarkedAsTheAgent(t *testing.T) {
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv("AI_AGENT", "some-other-agent")
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	e, work := dashEngine(t)
+	ctx := context.Background()
+	writeFile(t, filepath.Join(work, "marks.sh"), "#!/bin/sh\nprintf '{\"claudecode\":\"%s\",\"agent\":\"%s\",\"entry\":\"%s\"}' \"$CLAUDECODE\" \"$AI_AGENT\" \"$CLAUDE_CODE_ENTRYPOINT\"\n", 0o755)
+	r := &Run{ID: "run_t", Workdir: work}
+	spec := dash.Spec{Title: "T", Refresh: "1h", Sources: []dash.Source{{Key: "m", Command: "./marks.sh", Format: "json"}},
+		Tiles: []dash.Tile{{Key: "m", Type: "text", Title: "Marks", Source: "m"}}}
+	b, _ := json.Marshal(spec)
+	if res := e.dashSave(ctx, r, "", b); res.IsError {
+		t.Fatal(res.Text)
+	}
+	all, _ := e.st.Dashboards(ctx)
+	id := all[0].ID
+	if err := e.AllowDashboardSource(ctx, id, "m", true, sourceRev(t, e, id, "m")); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.refresh(ctx, id, refreshChanged); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := e.DashboardDetail(ctx, id, "")
+	v := tile(d, "m")
+	var got map[string]string
+	if err := json.Unmarshal([]byte(v.Text), &got); err != nil {
+		t.Fatalf("tile: %+v", v)
+	}
+	if got["claudecode"] != "1" || got["agent"] != "claude-code" || got["entry"] != "" {
+		t.Errorf("the command ran with %v, want CLAUDECODE=1, AI_AGENT=claude-code and nothing CloudBuddy was started with", got)
+	}
+}
+
+// An OK is for exact versions of the files a command runs: a version the
+// user allowed before runs again without asking (a git checkout that went
+// away and back), a new one waits, and a "no" forgets every earlier OK.
+func TestDashEarlierOKCoversAVersionThatCameBack(t *testing.T) {
+	e, work := dashEngine(t)
+	ctx := context.Background()
+	script := filepath.Join(work, "count.sh")
+	v1, v2 := "#!/bin/sh\necho 7\n", "#!/bin/sh\necho 8\n"
+	writeFile(t, script, v1, 0o755)
+	r := &Run{ID: "run_t", Workdir: work}
+	users := dash.Source{Key: "users", Command: "./count.sh", Format: "auto"}
+	id := saveSpec(t, e, r, "", users)
+	revs := map[string]string{"users": dash.SourceRev(work, users)}
+	state := func() string {
+		t.Helper()
+		if err := e.refresh(ctx, id, refreshChanged); err != nil {
+			t.Fatal(err)
+		}
+		latest, _, err := e.st.LatestDashboardRuns(ctx, id, revs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return latest["users"].State
+	}
+	allow := func(yes bool) {
+		t.Helper()
+		if err := e.AllowDashboardSource(ctx, id, "users", yes, sourceRev(t, e, id, "users")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	allow(true)
+	if s := state(); s != dash.RunOK {
+		t.Fatalf("allowed v1: %s", s)
+	}
+	writeFile(t, script, v2, 0o755)
+	if s := state(); s != dash.RunWaiting {
+		t.Fatalf("v2 should wait for an OK: %s", s)
+	}
+	d, _ := e.DashboardDetail(ctx, id, "")
+	if v := tile(d, "users"); v.State != "waiting" || v.Number != nil {
+		t.Errorf("while v2 waits the tile shouldn't show v1's number: %+v", v)
+	}
+	allow(true)
+	if s := state(); s != dash.RunOK {
+		t.Fatalf("allowed v2: %s", s)
+	}
+	writeFile(t, script, v1, 0o755)
+	if s := state(); s != dash.RunOK {
+		t.Errorf("v1 came back and was allowed before, but it waits: %s", s)
+	}
+
+	allow(false)
+	if s := state(); s != dash.RunDeclined {
+		t.Fatalf("after a no: %s", s)
+	}
+	writeFile(t, script, v2, 0o755)
+	if s := state(); s != dash.RunDeclined {
+		t.Fatalf("after a no, another version: %s", s)
+	}
+	allow(true) // v2 again: the no forgot v1
+	if s := state(); s != dash.RunOK {
+		t.Fatalf("allowed v2 after the no: %s", s)
+	}
+	writeFile(t, script, v1, 0o755)
+	if s := state(); s != dash.RunWaiting {
+		t.Errorf("a version allowed before a no ran without asking: %s", s)
+	}
+}
